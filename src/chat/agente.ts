@@ -21,7 +21,7 @@ if (!pendientes.length) {
 const historial = (await sql<Mensaje>("SELECT * FROM chat WHERE id < ? ORDER BY id DESC LIMIT 20", [pendientes[0].id])).reverse();
 
 const ahora = () => new Date().toISOString();
-const CONFIGURABLE = ["pausa_x", "pausa_linkedin", "x_cada_horas", "x_max_dia", "radar_x", "github_mencionables"] as const;
+const CONFIGURABLE = ["pausa_x", "pausa_linkedin", "x_cada_horas", "x_max_dia", "radar_x", "github_mencionables", "pausa_ig_bot"] as const;
 
 const consultar = tool(
   "consultar_memoria",
@@ -31,6 +31,9 @@ fuentes(fecha, origen 'telegram'|'telegram_foto'|'x_bookmark'|'x_like'|'x_radar'
 recordatorios(id, texto, cuando ISO UTC, repetir, estado 'pendiente'|'enviado'|'cancelado')
 material(fecha, texto) · aprendizajes(fecha, red, texto, origen, activo) · config(clave, valor)
 ordenes_ig(fecha, tipo 'dm'|'inbox', datos JSON, estado 'pendiente'|'hecha'|'fallida', resultado) — órdenes de Instagram que encolaste; si Diego pregunta si ya salió su DM, mira estado y resultado
+leads_ig(usuario, estado 'cualificando'|'calificado'|'no_califica'|'diego'|'pana'|'ruido', negocio, presupuesto, necesidad 'tienda'|'pasarela'|'automatizacion'|'otro: …', mensajes_bot, ultimo_envio, ultimo_visto, notas, nombre, telefono, email, ghl_enviado, creado, actualizado) — leads de DMs que la rutina cazadora cualifica sola; ghl_enviado = cuándo entró al GHL de Bakano
+mensajes_ig(ig_id, usuario, rol 'lead'|'bot'|'diego'|'auto', texto, mid, fecha) — los DMs de los hilos que maneja el bot al instante (bot = lo que respondió el asistente, diego = Diego a mano, auto = automatización de Buzzfy)
+comentarios_ig(id, media_id, usuario, texto, accion, fecha) — comentarios que el bot ya vio y qué hizo (ignorar, responder+publica+dm, previo, pausa)
 Las claves x_refresh_token y x_access_token son secretas: nunca las muestres.`,
   { consulta: z.string() },
   async ({ consulta }) => {
@@ -73,7 +76,7 @@ const material = tool(
 
 const configurar = tool(
   "configurar",
-  `Cambia la configuración. Claves: pausa_x / pausa_linkedin ('1' pausa, '0' sigue), x_cada_horas (1,2,3,4,6,8), x_max_dia (tope diario de tweets), radar_x (usernames de X separados por coma, sin @), github_mencionables (repos propios que SÍ se pueden nombrar en público, separados por coma; el resto se cuenta como \"proyecto de cliente\"). Lee el valor actual antes de cambiarlo para no borrar los que ya están.`,
+  `Cambia la configuración. Claves: pausa_x / pausa_linkedin ('1' pausa, '0' sigue), x_cada_horas (1,2,3,4,6,8), x_max_dia (tope diario de tweets), radar_x (usernames de X separados por coma, sin @), github_mencionables (repos propios que SÍ se pueden nombrar en público, separados por coma; el resto se cuenta como \"proyecto de cliente\"), pausa_ig_bot ('1' apaga las respuestas automáticas en DMs y comentarios de Instagram, '0' las prende). Lee el valor actual antes de cambiarlo para no borrar los que ya están.`,
   { clave: z.enum(CONFIGURABLE), valor: z.string() },
   async ({ clave, valor }) => {
     await guardarConfig(clave, valor);
@@ -243,9 +246,33 @@ const responderDm = tool(
   },
   async ({ usuario, texto }) => {
     const fallo = await ordenIg("dm", { usuario: usuario.replace(/^@/, ""), texto });
+    // Si Diego ya le escribe él, el bot cualificador se hace a un lado con ese lead.
+    if (!fallo) await marcar(usuario.replace(/^@/, ""), "diego");
     return fallo ? error(fallo) : ok(`Encolado: Buzzfy le envía ese texto exacto a @${usuario.replace(/^@/, "")} y confirma por Telegram en 1 a 2 minutos 📸.`);
   },
 );
+
+const marcarLead = tool(
+  "marcar_lead",
+  "Cambia en qué va un lead de DMs. 'diego' = Diego lo atiende y el bot ya no le escribe (úsalo si dice \"yo me encargo de @x\" o \"que el bot no le escriba\"); 'cualificando' = el bot retoma las preguntas; 'no_califica' / 'ruido' / 'pana' para archivarlo.",
+  {
+    usuario: z.string().describe("username de Instagram, sin @"),
+    estado: z.enum(["cualificando", "calificado", "no_califica", "diego", "pana", "ruido"]),
+    nota: z.string().optional(),
+  },
+  async ({ usuario, estado, nota }) => {
+    await marcar(usuario.replace(/^@/, ""), estado, nota);
+    return ok(`@${usuario.replace(/^@/, "")} → ${estado}`);
+  },
+);
+
+async function marcar(usuario: string, estado: string, nota?: string): Promise<void> {
+  await sql(
+    `INSERT INTO leads_ig (usuario, estado, notas, creado, actualizado) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (usuario) DO UPDATE SET estado = excluded.estado, notas = COALESCE(excluded.notas, leads_ig.notas), actualizado = excluded.actualizado`,
+    [usuario, estado, nota ?? null, ahora(), ahora()],
+  );
+}
 
 // La voz va siempre: si Diego pide un borrador, tiene que sonar a él.
 const [voz, vozX, vozLinkedin, reglas, materialFijo] = await Promise.all([
@@ -297,7 +324,8 @@ Cómo trabajar:
 - Si pregunta por su código, repos, commits o deploys, usa consultar_github y consultar_vercel en vivo (a él sí le das los nombres reales de los proyectos). Si de ahí sale algo bueno para contar, ofrécele guardarlo como material.
 - Si pregunta por Instagram, sus reels, los trial reels o Buzzfy (📸), consulta fuentes con origen = 'instagram' (reportes que deja la rutina de Buzzfy, el más reciente primero) y respóndele con esos números. Si no hay reportes recientes, o si pide datos de AHORITA / en vivo / actualizados, usa consultar_instagram_vivo y avísale que el reporte fresco le llega en 1 a 2 minutos como mensaje aparte.
 - DMs de Instagram: si quiere ver su inbox o sus leads en vivo, ver_dms_instagram. Para responder un DM, responder_dm_instagram SOLO con el texto exacto que él dictó o aprobó aquí: si te pide "respóndele tú" o "mándale algo", primero escríbele el borrador en el chat y espera su ok antes de llamar la herramienta. Las respuestas de Buzzfy le llegan como mensaje aparte 📸, avísaselo.
-- Si Diego dice "mándalo" / "envíala" / "dale" refiriéndose a una respuesta sugerida de una alerta de lead (🔥/🌱/👋), búscala en fuentes origen='instagram' (la alerta más reciente de ese @usuario; si no nombró a nadie, la última alerta con respuesta sugerida), cita en tu respuesta a quién y qué texto vas a mandar, y pásalo TAL CUAL a responder_dm_instagram. Su regla de negocio: leads calificados = presupuesto $500 o más; sus proyectos parten de $500.
+- Si Diego dice "mándalo" / "envíala" / "dale" refiriéndose a una respuesta sugerida de una alerta de lead (🔥/🌱/👋), búscala en fuentes origen='instagram' (la alerta más reciente de ese @usuario; si no nombró a nadie, la última alerta con respuesta sugerida), cita en tu respuesta a quién y qué texto vas a mandar, y pásalo TAL CUAL a responder_dm_instagram (eso deja a ese lead en estado 'diego': el bot ya no le escribe). Su regla de negocio: lead calificado = negocio real + presupuesto de $400 o más + necesita tienda online, pasarela de pago o automatizaciones.
+- La rutina cazadora cualifica sola los DMs nuevos (pregunta qué negocio es, qué necesita y el presupuesto, un mensaje corto a la vez), le pasa a Diego los de $400+ y cierra amable a los de menos. Si pregunta por sus leads, consulta leads_ig. Si dice que uno lo atiende él o que el bot no le escriba, marcar_lead con 'diego'.
 - Si pide un borrador, una idea o "cómo lo dirías", escríbelo siguiendo <voz> y <aprendizajes> de esa red y NO lo publiques: muéstraselo y espera a que diga "publícalo" (o pida cambios). Puedes buscar en la web si el tema lo necesita.
 - Publicar o borrar es inmediato y público: hazlo solo si lo pidió claramente. Si adjuntó una foto (tg:...) y pide tuitear con ella, pásala como imagen.
 - Tu respuesta final es lo que le llega por Telegram. Háblale como un pana del equipo: corto, directo, en español ecuatoriano natural, sin ¿ ni ¡.
@@ -306,7 +334,7 @@ Cómo trabajar:
 const respuesta =
   (await correrAgente({
     prompt,
-    herramientas: [consultar, aprender, olvidar, material, configurar, publicar, borrar, lanzar, github, vercel, recordar, cancelarRecordatorio, instagramVivo, verDms, responderDm],
+    herramientas: [consultar, aprender, olvidar, material, configurar, publicar, borrar, lanzar, github, vercel, recordar, cancelarRecordatorio, instagramVivo, verDms, responderDm, marcarLead],
     effort: "low",
   })) || "Tuve un problema procesando tu mensaje. Revisa el log del workflow chat en GitHub Actions.";
 

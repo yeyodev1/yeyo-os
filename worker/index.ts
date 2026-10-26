@@ -1,20 +1,9 @@
 // Cerebro de los agentes: recibe Telegram, guarda la memoria en D1 y dispara los
 // workflows de GitHub a la hora exacta (los horarios de Actions se atrasan o se saltan).
-// Claude no corre aquí: el Agent SDK necesita lanzar un proceso y los Workers no pueden.
-interface Env {
-  DB: D1Database;
-  GH_REPO: string;
-  GH_USUARIO: string; // cuya actividad pública se lee como material
-  VERCEL_TOKEN?: string; // deploys a producción como material
-  VERCEL_TEAM_ID: string;
-  GH_TOKEN_DISPARO: string;
-  TELEGRAM_BOT_TOKEN: string;
-  TELEGRAM_WEBHOOK_SECRET: string;
-  TELEGRAM_VINCULO: string; // código del link t.me/<bot>?start=<código> que vincula a Diego
-  TELEGRAM_CHAT_ID?: string;
-  AGENTES_SECRET: string; // los agentes de GitHub Actions leen y escriben D1 por /api/sql
-  AVISOS_SECRET: string; // la rutina cloud de Instagram solo puede avisar y guardar en fuentes
-}
+// El Agent SDK no corre aquí (necesita lanzar un proceso); el motor de Instagram, que tiene que
+// contestar al instante, llama a Claude directo por la Messages API.
+import { type Env, type Lead, avisarInstagram, config, escapar, guardarConfig, igualSeguro, leadAGhl, responder, telefonoE164, telegram } from "./comun";
+import { pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, revisarComentarios, verificarFirmaMeta } from "./instagram";
 
 type Mensaje = {
   message_id: number;
@@ -44,6 +33,21 @@ export default {
     if (req.method === "POST" && url.pathname === "/api/sql") return consultaAgentes(req, env);
     if (req.method === "POST" && url.pathname === "/api/instagram") return avisoInstagram(req, env);
     if (url.pathname === "/api/instagram/ordenes") return ordenesInstagram(req, env);
+    if (url.pathname === "/api/instagram/leads") return leadsInstagram(req, env);
+    if (url.pathname === "/api/instagram/pensamientos") return pensamientosInstagram(req, env);
+    // Webhook de la app de Meta: DMs (y comentarios cuando Meta dé Advanced Access) al instante.
+    if (url.pathname === "/instagram") {
+      if (req.method === "GET") {
+        const ok = url.searchParams.get("hub.mode") === "subscribe" && !!env.META_VERIFY_TOKEN && url.searchParams.get("hub.verify_token") === env.META_VERIFY_TOKEN;
+        return ok ? new Response(url.searchParams.get("hub.challenge") ?? "") : new Response("no", { status: 403 });
+      }
+      if (req.method !== "POST") return new Response("no", { status: 405 });
+      const cuerpo = await req.text();
+      if (!(await verificarFirmaMeta(env, cuerpo, req.headers.get("X-Hub-Signature-256") ?? ""))) return new Response("no", { status: 401 });
+      // Meta reintenta si no le respondemos rápido: el trabajo sigue en segundo plano.
+      ctx.waitUntil(procesarWebhookInstagram(env, JSON.parse(cuerpo)).catch((e) => avisarInstagram(env, `⚠️ **Instagram**: ${String(e).slice(0, 300)}`)));
+      return new Response("ok");
+    }
     if (req.method === "POST" && url.pathname === "/api/github") {
       if (!igualSeguro(req.headers.get("Authorization") ?? "", `Bearer ${env.AGENTES_SECRET}`)) return new Response("no", { status: 401 });
       return Response.json({ github: await sincronizarGithub(env), vercel: await sincronizarVercel(env) });
@@ -67,7 +71,10 @@ export default {
     }
     // Este cron corre cada minuto por los recordatorios; lo demás va solo en el minuto 0.
     await enviarRecordatorios(env).catch((e) => console.error("Recordatorios:", e));
+    // Los comentarios no llegan por webhook sin Advanced Access: se revisan cada minuto.
+    await revisarComentarios(env).catch((e) => console.error("Comentarios IG:", e));
     if (new Date(evento.scheduledTime).getUTCMinutes() !== 0) return;
+    if (new Date(evento.scheduledTime).getUTCHours() === 4) await refrescarTokenIg(env).catch((e) => console.error("Token IG:", e));
     await sincronizarGithub(env).catch((e) => console.error("GitHub:", e));
     await sincronizarVercel(env).catch((e) => console.error("Vercel:", e));
     const hora = (new Date(evento.scheduledTime).getUTCHours() + 19) % 24; // UTC-5, Ecuador no tiene horario de verano
@@ -158,13 +165,7 @@ async function avisoInstagram(req: Request, env: Env): Promise<Response> {
   if (!env.AVISOS_SECRET || !igualSeguro(auth, `Bearer ${env.AVISOS_SECRET}`)) return new Response("no", { status: 401 });
   const { texto, avisar = true } = (await req.json()) as { texto?: string; avisar?: boolean };
   if (!texto?.trim()) return Response.json({ error: "Falta texto" }, { status: 400 });
-  await env.DB.prepare("INSERT INTO fuentes (fecha, origen, externo_id, texto) VALUES (?, 'instagram', ?, ?)")
-    .bind(new Date().toISOString(), `ig@${Date.now()}`, texto.slice(0, 8000))
-    .run();
-  env.TELEGRAM_CHAT_ID ||= (await config(env, "telegram_chat_id")) ?? undefined;
-  // **negritas** del reporte se vuelven <b> reales; el resto va escapado.
-  const cuerpo = escapar(texto.slice(0, 3800)).replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
-  if (avisar && env.TELEGRAM_CHAT_ID) await responder(env, `📸 <b>Instagram</b>\n\n${cuerpo}`);
+  await avisarInstagram(env, texto, avisar);
   return Response.json({ ok: true });
 }
 
@@ -184,6 +185,47 @@ async function ordenesInstagram(req: Request, env: Env): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+// Leads de DMs: la rutina cazadora lee en qué va cada uno y guarda lo que averiguó.
+// Solo toca leads_ig, con la misma llave limitada de los avisos (lee DMs de terceros).
+const CAMPOS_LEAD = ["conversation_id", "estado", "negocio", "presupuesto", "necesidad", "mensajes_bot", "ultimo_envio", "ultimo_visto", "notas", "nombre", "telefono", "email"] as const;
+const ESTADOS_LEAD = ["cualificando", "calificado", "no_califica", "diego", "pana", "ruido"];
+
+async function leadsInstagram(req: Request, env: Env): Promise<Response> {
+  const auth = req.headers.get("Authorization") ?? "";
+  if (!env.AVISOS_SECRET || !igualSeguro(auth, `Bearer ${env.AVISOS_SECRET}`)) return new Response("no", { status: 401 });
+  if (req.method === "GET") {
+    const usuario = new URL(req.url).searchParams.get("usuario")?.replace(/^@/, "");
+    const { results } = usuario
+      ? await env.DB.prepare("SELECT * FROM leads_ig WHERE usuario = ?").bind(usuario).all()
+      : await env.DB.prepare("SELECT * FROM leads_ig WHERE actualizado > datetime('now', '-30 days') ORDER BY actualizado DESC LIMIT 100").all();
+    return Response.json({ leads: results });
+  }
+  if (req.method !== "POST") return new Response("no", { status: 405 });
+  const datos = (await req.json()) as Record<string, unknown>;
+  const usuario = String(datos.usuario ?? "").replace(/^@/, "").trim();
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(usuario)) return Response.json({ error: "Falta usuario (username de Instagram)" }, { status: 400 });
+  if (datos.estado !== undefined && !ESTADOS_LEAD.includes(String(datos.estado))) {
+    return Response.json({ error: `estado debe ser uno de: ${ESTADOS_LEAD.join(", ")}` }, { status: 400 });
+  }
+  if (datos.telefono) {
+    datos.telefono = telefonoE164(String(datos.telefono));
+    if (!datos.telefono) return Response.json({ error: "Ese teléfono no parece válido (usa +593… o 09…)" }, { status: 400 });
+  }
+  // Solo se pisan los campos que vienen; el resto queda como estaba.
+  const campos = CAMPOS_LEAD.filter((c) => datos[c] !== undefined);
+  const valores = campos.map((c) => (datos[c] === null ? null : c === "mensajes_bot" ? Number(datos[c]) : String(datos[c]).slice(0, 1000)));
+  const ahora = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO leads_ig (usuario, ${campos.map((c) => `${c}, `).join("")}creado, actualizado) VALUES (?, ${campos.map(() => "?, ").join("")}?, ?)
+     ON CONFLICT (usuario) DO UPDATE SET ${[...campos.map((c) => `${c} = excluded.${c}`), "actualizado = excluded.actualizado"].join(", ")}`,
+  )
+    .bind(usuario, ...valores, ahora, ahora)
+    .run();
+  const lead = await env.DB.prepare("SELECT * FROM leads_ig WHERE usuario = ?").bind(usuario).first<Lead>();
+  const ghl = lead ? await leadAGhl(lead, env) : null;
+  return Response.json({ ok: true, ghl });
+}
+
 // Puerta de los agentes a la memoria: así no necesitan un token de Cloudflare.
 async function consultaAgentes(req: Request, env: Env): Promise<Response> {
   const auth = req.headers.get("Authorization") ?? "";
@@ -195,13 +237,6 @@ async function consultaAgentes(req: Request, env: Env): Promise<Response> {
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 400 });
   }
-}
-
-function igualSeguro(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let dif = 0;
-  for (let i = 0; i < a.length; i++) dif |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return dif === 0;
 }
 
 async function atender(m: Mensaje, env: Env): Promise<void> {
@@ -388,18 +423,6 @@ async function estado(env: Env): Promise<string> {
   ].join("\n");
 }
 
-async function config(env: Env, clave: string): Promise<string | null> {
-  return env.DB.prepare("SELECT valor FROM config WHERE clave = ?").bind(clave).first<string>("valor");
-}
-
-async function guardarConfig(env: Env, clave: string, valor: string): Promise<void> {
-  await env.DB.prepare(
-    "INSERT INTO config (clave, valor, actualizado) VALUES (?, ?, datetime('now')) ON CONFLICT (clave) DO UPDATE SET valor = excluded.valor, actualizado = excluded.actualizado",
-  )
-    .bind(clave, valor)
-    .run();
-}
-
 async function disparar(env: Env, workflow: string, inputs: Record<string, string> = {}): Promise<void> {
   const res = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/${workflow}/dispatches`, {
     method: "POST",
@@ -412,21 +435,6 @@ async function disparar(env: Env, workflow: string, inputs: Record<string, strin
   });
   if (res.status !== 204) throw new Error(`GitHub respondió ${res.status} al disparar ${workflow}: ${await res.text()}`);
 }
-
-async function telegram(env: Env, metodo: string, cuerpo: unknown): Promise<void> {
-  const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${metodo}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cuerpo),
-  });
-  if (!res.ok) console.error(`Telegram ${metodo} ${res.status}: ${await res.text()}`);
-}
-
-// Mensajes fijos del Worker en HTML de Telegram: todo texto variable pasa por escapar().
-const responder = (env: Env, text: string) =>
-  telegram(env, "sendMessage", { chat_id: env.TELEGRAM_CHAT_ID, text, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
-
-const escapar = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const nombreRed = (r: string) => ({ x: "🐦 X", linkedin: "💼 LinkedIn", radar: "📡 el radar" })[r] ?? r;
 

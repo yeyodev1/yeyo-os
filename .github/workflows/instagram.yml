@@ -1,0 +1,39 @@
+name: Instagram
+
+on:
+  workflow_dispatch:
+
+# Uno a la vez: cada ejecución piensa todo lo pendiente en la cola del Worker. Si llegan más
+# mientras corre, GitHub deja una ejecución en espera y esa recoge lo nuevo.
+concurrency:
+  group: instagram
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pensar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AGENTES_URL: ${{ vars.AGENTES_URL }}
+      AGENTES_SECRET: ${{ secrets.AGENTES_SECRET }}
+      # Los DMs piden velocidad: Sonnet con effort bajo.
+      CLAUDE_MODEL: claude-sonnet-5-5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # node_modules guardado entre ejecuciones: evita ~8 s de npm ci en cada disparo.
+      - id: modulos
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: modulos-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.modulos.outputs.cache-hit != 'true'
+        run: npm ci
+      - run: npm run instagram

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { type Fuente, type Post, type Red, leerConfig, postsRecientes, sql } from "./memoria.ts";
 
 // Repos propios que sí se pueden nombrar en público (configurable con la clave github_mencionables).
-const MENCIONABLES_POR_DEFECTO = "agentes-de-yeyo,agente-linkedin,personal-portfolio-2025,yeyo-backapp";
+const MENCIONABLES_POR_DEFECTO = "yeyo-os,agente-linkedin,personal-portfolio-2025,yeyo-backapp";
 // Partes de nombres de repo que no identifican a nadie (no se tapan en los commits).
 const GENERICAS = new Set(["backapp", "frontapp", "frontend", "backend", "api", "web", "app", "page", "tienda", "store", "landing", "admin", "dashboard", "bakano"]);
 

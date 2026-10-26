@@ -11,7 +11,7 @@
     // UTC. Cada minuto: recordatorios (X, radar y GitHub solo en el minuto 0); 13:30 = 8:30 am Ecuador para LinkedIn.
     "crons": ["* * * * *", "30 13 * * *"]
   },
-  "vars": { "GH_REPO": "yeyodev1/agentes-de-yeyo", "GH_USUARIO": "yeyodev1", "VERCEL_TEAM_ID": "team_ZB0eFNsqFQo6bL8QgAMAWUHa" },
+  "vars": { "GH_REPO": "yeyodev1/yeyo-os", "GH_USUARIO": "yeyodev1", "VERCEL_TEAM_ID": "team_ZB0eFNsqFQo6bL8QgAMAWUHa" },
   "d1_databases": [
     {
       "binding": "DB",
@@ -21,5 +21,6 @@
     }
   ]
   // Secrets (wrangler secret put): GH_TOKEN_DISPARO, TELEGRAM_BOT_TOKEN,
-  // TELEGRAM_WEBHOOK_SECRET, TELEGRAM_VINCULO, AGENTES_SECRET, VERCEL_TOKEN, AVISOS_SECRET
+  // TELEGRAM_WEBHOOK_SECRET, TELEGRAM_VINCULO, AGENTES_SECRET, VERCEL_TOKEN, AVISOS_SECRET, GHL_WEBHOOK_URL,
+  // META_APP_SECRET, IG_APP_SECRET, META_VERIFY_TOKEN, IG_TOKEN (motor de Instagram al instante)
 }
