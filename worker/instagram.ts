@@ -10,6 +10,9 @@ const TEXTOS_AUTOMATICOS = ["¡Buenas! 🎉 Vi tu comentario", "¡Qué más! �
 // Solo se calla del todo con quien Diego ya atiende a mano. Panas, ruido y los que no calificaron
 // pasan otra vez por Claude: si vuelven con interés de negocio, la conversación sigue.
 const NO_SE_LE_ESCRIBE = ["diego"];
+// Palabras de la regla "Comentario a DM" de Buzzfy (contiene, sin mayúsculas). Si Buzzfy cambia la
+// regla, actualizar aquí para que no reciban dos respuestas.
+const PALABRAS_BUZZFY = ["bakano", "info", "web", "precio", "cuanto", "cuánto", "interesa", "quiero", "cotiza", "pagina", "página", "tienda", "online", "automatiza", "dashboard", "asesoria", "asesoría", "link"];
 
 type LeadIg = Lead & { ig_id: string | null; mensajes_bot: number; ultimo_envio: string | null; ultimo_visto: string | null; notas: string | null };
 type Perfil = { username?: string; name?: string; follower_count?: number; is_user_follow_business?: boolean };
@@ -17,7 +20,14 @@ type Evento = {
   sender: { id: string };
   recipient: { id: string };
   timestamp: number;
-  message?: { mid: string; text?: string; is_echo?: boolean; app_id?: number; attachments?: { type: string }[] };
+  message?: {
+    mid: string;
+    text?: string;
+    is_echo?: boolean;
+    app_id?: number;
+    attachments?: { type: string; payload?: { url?: string; title?: string; reel_video_id?: string } }[];
+    reply_to?: { story?: { id?: string; url?: string } };
+  };
 };
 type Comentario = { id: string; text?: string; timestamp?: string; from?: { id: string; username?: string }; username?: string };
 type Media = { id: string; caption?: string; permalink?: string; media_type?: string; timestamp?: string };
@@ -177,7 +187,7 @@ async function manejarEco(env: Env, ev: Evento): Promise<void> {
 async function manejarDm(env: Env, ev: Evento): Promise<void> {
   const m = ev.message!;
   const igId = ev.sender.id;
-  const texto = m.text ?? (m.attachments?.length ? `[mandó ${m.attachments.map((a) => a.type).join(", ")}]` : "");
+  const texto = await describirMensaje(env, m);
   // Meta reintenta los webhooks: el mid único evita contestar dos veces lo mismo.
   const guardado = await env.DB.prepare("INSERT OR IGNORE INTO mensajes_ig (ig_id, rol, texto, mid, fecha) VALUES (?, 'lead', ?, ?, ?)")
     .bind(igId, texto, m.mid, new Date(ev.timestamp).toISOString())
@@ -194,6 +204,24 @@ async function manejarDm(env: Env, ev: Evento): Promise<void> {
   const masNuevo = await env.DB.prepare("SELECT 1 FROM mensajes_ig WHERE ig_id = ? AND rol = 'lead' AND id > ?").bind(igId, miId).first();
   if (masNuevo) return;
   await atenderLead(env, igId);
+}
+
+// Lo que Claude lee del mensaje: el texto más qué compartió. Si compartió un reel de Diego, va
+// con su caption para que la conversación arranque desde ese video.
+async function describirMensaje(env: Env, m: NonNullable<Evento["message"]>): Promise<string> {
+  const partes: string[] = [];
+  if (m.reply_to?.story) partes.push("[respondió a tu historia]");
+  const propios = m.attachments?.some((a) => a.payload?.reel_video_id) ? await mediaReciente(env).catch(() => []) : [];
+  for (const a of m.attachments ?? []) {
+    const reel = a.payload?.reel_video_id;
+    const tuyo = reel ? propios.find((x) => x.id === reel) : undefined;
+    if (tuyo) partes.push(`[compartió TU video: "${(tuyo.caption ?? "").slice(0, 300)}" ${tuyo.permalink ?? ""}]`);
+    else if (reel || ["ig_reel", "reel", "share"].includes(a.type)) {
+      partes.push(`[compartió un reel${a.payload?.title ? `: "${a.payload.title.slice(0, 300)}"` : ""}${a.payload?.url ? ` ${a.payload.url}` : ""}]`);
+    } else partes.push(`[mandó ${{ image: "una foto", video: "un video", audio: "un audio", story_mention: "una historia donde te menciona" }[a.type] ?? a.type}]`);
+  }
+  if (m.text) partes.push(m.text);
+  return partes.join(" ") || "(mensaje sin texto)";
 }
 
 // Candado por lead mientras Claude piensa en Actions: si escribe de nuevo en ese rato, al aplicar
@@ -401,6 +429,10 @@ async function manejarComentario(env: Env, m: Media, c: Comentario): Promise<voi
   if (!(await marcarComentario(env, m, c, "procesando"))) return;
   if (await pausado(env)) {
     await env.DB.prepare("UPDATE comentarios_ig SET accion = 'pausa' WHERE id = ?").bind(c.id).run();
+    return;
+  }
+  if (PALABRAS_BUZZFY.some((p) => (c.text ?? "").toLowerCase().includes(p))) {
+    await env.DB.prepare("UPDATE comentarios_ig SET accion = 'buzzfy' WHERE id = ?").bind(c.id).run();
     return;
   }
   const usuario = c.from?.username ?? c.username ?? null;
