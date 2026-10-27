@@ -136,6 +136,11 @@ async function enviarDm(env: Env, destino: { id: string } | { comment_id: string
   return { mid: r.message_id, igId: r.recipient_id ?? ("id" in destino ? destino.id : null) };
 }
 
+// Otra app conectada al Instagram (Buzzfy, GHL…) le escribió a esa persona y Meta le dio el
+// control del chat por ~24 h: mientras tanto Instagram no deja que YEYO OS le escriba.
+const chatTomado = (e: unknown) => /2534037|thread owner/.test(String(e));
+const AVISO_TOMADO = "otra app conectada a tu Instagram (Buzzfy u otra) le escribió y Meta le dio el control de ese chat por unas 24 h";
+
 const pausado = async (env: Env) => (await config(env, "pausa_ig_bot")) === "1";
 
 // Los fallos van a Telegram en una línea: dentro de waitUntil nadie más los vería.
@@ -291,12 +296,18 @@ async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLea
   const respuesta = lead.estado === "diego" || (await pausado(env)) ? null : d.respuesta?.trim() || null;
 
   let enviado: string | null = null;
+  let tomado = false;
   if (respuesta) {
-    const { mid } = await enviarDm(env, { id: igId }, respuesta);
-    enviado = respuesta;
-    await env.DB.prepare("INSERT OR IGNORE INTO mensajes_ig (ig_id, usuario, rol, texto, mid, fecha) VALUES (?, ?, 'bot', ?, ?, ?)")
-      .bind(igId, lead.usuario, enviado, mid, ahora())
-      .run();
+    try {
+      const { mid } = await enviarDm(env, { id: igId }, respuesta);
+      enviado = respuesta;
+      await env.DB.prepare("INSERT OR IGNORE INTO mensajes_ig (ig_id, usuario, rol, texto, mid, fecha) VALUES (?, ?, 'bot', ?, ?, ?)")
+        .bind(igId, lead.usuario, enviado, mid, ahora())
+        .run();
+    } catch (e) {
+      if (!chatTomado(e)) throw e;
+      tomado = true;
+    }
   }
   const ultimo = await env.DB.prepare("SELECT MAX(fecha) AS fecha FROM mensajes_ig WHERE ig_id = ? AND rol = 'lead'").bind(igId).first<{ fecha: string }>();
   await env.DB.prepare(
@@ -326,6 +337,8 @@ async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLea
     ? enviado ? `🔁 **Le hice seguimiento a @${lead.usuario}** (no respondía)\n✍️ "${enviado}"` : ""
     : await resumenDm(env, lead, igId, enviado, d.estado);
   let aviso = d.estado === "ruido" ? "" : [encabezado, d.aviso?.trim()].filter(Boolean).join("\n\n");
+  if (tomado)
+    aviso = `🔒 **No le pude escribir a @${lead.usuario}**: ${AVISO_TOMADO}\n✍️ Iba a decirle: "${respuesta}"\n👉 Respóndele tú desde Instagram\n\n${aviso}`.trim();
   const actualizado = await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>();
   if (actualizado) {
     const ghl = await leadAGhl(actualizado, env);
@@ -487,7 +500,16 @@ async function aplicarComentario(env: Env, d: DecisionComentario, datos: { media
       lineas.push("📩 Le sigo la conversación por DM");
     } else if (d.dm?.trim()) {
       // Respuesta privada al comentario: abre el DM aunque nunca nos haya escrito (hasta 7 días).
-      const { mid, igId } = await enviarDm(env, { comment_id: c.id }, d.dm.trim());
+      const envio = await enviarDm(env, { comment_id: c.id }, d.dm.trim()).catch((e) => {
+        if (!chatTomado(e)) throw e;
+        return null;
+      });
+      if (!envio) {
+        lineas.push(`🔒 No le pude escribir por DM: ${AVISO_TOMADO}`, `✍️ Iba a decirle: "${d.dm.trim()}"`, "👉 Escríbele tú desde Instagram");
+        await env.DB.prepare("UPDATE comentarios_ig SET accion = ? WHERE id = ?").bind([...hecho, "dm-bloqueado"].join("+"), c.id).run();
+        return avisarInstagram(env, [lineas.join("\n"), d.aviso?.trim()].filter(Boolean).join("\n\n"));
+      }
+      const { mid, igId } = envio;
       await env.DB.prepare(
         `INSERT INTO leads_ig (usuario, ig_id, estado, mensajes_bot, ultimo_envio, notas, creado, actualizado) VALUES (?, ?, 'cualificando', 1, ?, ?, ?, ?)
          ON CONFLICT (usuario) DO UPDATE SET ig_id = COALESCE(excluded.ig_id, leads_ig.ig_id), mensajes_bot = leads_ig.mensajes_bot + 1,
