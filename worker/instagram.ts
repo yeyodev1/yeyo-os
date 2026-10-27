@@ -23,6 +23,7 @@ type Media = { id: string; caption?: string; permalink?: string; media_type?: st
 type Decision = {
   estado: string;
   negocio: string | null;
+  negocio_ig?: string | null;
   necesidad: string | null;
   presupuesto: string | null;
   nombre: string | null;
@@ -240,13 +241,14 @@ async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLea
   }
   const ultimo = await env.DB.prepare("SELECT MAX(fecha) AS fecha FROM mensajes_ig WHERE ig_id = ? AND rol = 'lead'").bind(igId).first<{ fecha: string }>();
   await env.DB.prepare(
-    `UPDATE leads_ig SET estado = CASE WHEN estado = 'diego' THEN 'diego' ELSE ? END, negocio = COALESCE(?, negocio), necesidad = COALESCE(?, necesidad),
+    `UPDATE leads_ig SET estado = CASE WHEN estado = 'diego' THEN 'diego' ELSE ? END, negocio = COALESCE(?, negocio), negocio_ig = COALESCE(?, negocio_ig), necesidad = COALESCE(?, necesidad),
        presupuesto = COALESCE(?, presupuesto), nombre = COALESCE(?, nombre), telefono = COALESCE(?, telefono), email = COALESCE(?, email),
        mensajes_bot = mensajes_bot + ?, ultimo_envio = COALESCE(?, ultimo_envio), ultimo_visto = ?, actualizado = ? WHERE ig_id = ?`,
   )
     .bind(
       d.estado,
       d.negocio,
+      d.negocio_ig?.replace(/^@/, "").trim() || null,
       d.necesidad,
       d.presupuesto,
       d.nombre,

@@ -15,6 +15,7 @@ const nulo = z.string().nullable();
 const ESQUEMA_DM = {
   estado: z.enum(["cualificando", "calificado", "no_califica", "diego", "pana", "ruido"]),
   negocio: nulo,
+  negocio_ig: nulo.describe("usuario de Instagram del negocio, si lo dio (sin @)"),
   necesidad: nulo.describe("'tienda' | 'pasarela' | 'automatizacion' | 'otro: …'"),
   presupuesto: nulo.describe("lo que dijo, tal cual"),
   nombre: nulo,

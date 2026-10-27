@@ -65,24 +65,33 @@ export async function avisarInstagram(env: Env, texto: string, avisar = true): P
   if (avisar && env.TELEGRAM_CHAT_ID) await responder(env, `📸 <b>Instagram</b>\n\n${cuerpo}`);
 }
 
-// Un calificado con teléfono entra a GHL una sola vez, por el mismo webhook y con el mismo
-// payload que la landing web.bakano.ec. No pasa por su /api/lead para no mandarle a Meta CAPI
+// Todo lead con WhatsApp o correo entra a GHL (califique o no), por el mismo webhook y con el
+// mismo payload que la landing web.bakano.ec. Si después califica se manda otra vez, así el
+// workflow le abre la oportunidad. No pasa por su /api/lead para no mandarle a Meta CAPI
 // un "Lead" de la web que no existió (ensuciaría la atribución de las campañas).
-export type Lead = { usuario: string; estado: string; negocio: string | null; presupuesto: string | null; necesidad: string | null; nombre: string | null; telefono: string | null; email: string | null; ghl_enviado: string | null };
+export type Lead = { usuario: string; estado: string; negocio: string | null; presupuesto: string | null; necesidad: string | null; nombre: string | null; telefono: string | null; email: string | null; ghl_enviado: string | null; negocio_ig?: string | null; ghl_estado?: string | null };
 
 export async function leadAGhl(l: Lead, env: Env): Promise<string | null> {
-  if (l.estado !== "calificado" || !l.telefono || l.ghl_enviado) return null;
+  if (!l.telefono && !l.email) return null; // GHL crea el contacto por teléfono o correo
+  if (["pana", "ruido"].includes(l.estado)) return null;
+  const califica = l.estado === "calificado";
+  if (l.ghl_enviado && (!califica || l.ghl_estado === "calificado")) return null;
   if (!env.GHL_WEBHOOK_URL) return "falta GHL_WEBHOOK_URL";
   const [nombre = "", ...resto] = (l.nombre ?? l.usuario).trim().split(/\s+/);
   // Las ramas del workflow solo conocen web y tienda; la pasarela va con la tienda (PayPhone).
-  const interes = /tienda|pasarela/i.test(l.necesidad ?? "") ? "tienda" : /web|p[aá]gina/i.test(l.necesidad ?? "") ? "web" : (l.necesidad ?? "");
+  // Solo un calificado abre oportunidad: al resto se le manda un interés que el workflow no conoce
+  // y queda como contacto con su nota.
+  const tipo = /tienda|pasarela/i.test(l.necesidad ?? "") ? "tienda" : /web|p[aá]gina/i.test(l.necesidad ?? "") ? "web" : (l.necesidad ?? "");
+  const interes = califica ? tipo : "dm-sin-calificar";
   const plan = interes === "tienda" ? "Tienda Online + PayPhone" : interes === "web" ? "Pagina Web Pro" : "Solo informacion";
   const event_id = `dm_${Date.now()}`;
   const notas = [
     "🧾 Lead DMs Instagram @yeyo.dev",
     "📝 Entra a GHL por la misma vía que la landing web.bakano.ec, pero NO llenó la landing: lo cualificó el bot en los DMs de @yeyo.dev. No se reportó a Meta CAPI.",
+    `📊 Estado: ${{ calificado: "✅ Calificado ($400+)", cualificando: "⏳ Todavía cualificando", no_califica: "🚫 No calificó (presupuesto bajo)", diego: "🌱 Lo atiende Diego" }[l.estado] ?? l.estado}`,
     `📸 Instagram: @${l.usuario} (https://instagram.com/${l.usuario})`,
     `🏪 Negocio: ${l.negocio ?? "—"}`,
+    `🏷️ Instagram del negocio: ${l.negocio_ig ?? "—"}`,
     `🛠️ Necesita: ${l.necesidad ?? "—"}`,
     `💰 Presupuesto (lo que dijo): ${l.presupuesto ?? "—"}`,
     `✉️ Email: ${l.email ?? "—"}`,
@@ -97,21 +106,21 @@ export async function leadAGhl(l: Lead, env: Env): Promise<string | null> {
       nombre,
       apellido: resto.join(" "),
       full_name: (l.nombre ?? l.usuario).trim(),
-      telefono: l.telefono,
+      telefono: l.telefono ?? "",
       email: l.email ?? "",
       negocio: l.negocio ?? "",
       interes,
       plan_nombre: plan,
       valor: interes === "tienda" ? "600" : interes === "web" ? "500" : "",
-      inversion_confirmada: "si",
+      inversion_confirmada: califica ? "si" : "no",
       origen: "dm-instagram-yeyo.dev",
       origen_url: `https://instagram.com/${l.usuario}`,
-      tags: "dm-instagram-yeyo,lead-caliente",
+      tags: califica ? "dm-instagram-yeyo,lead-caliente" : "dm-instagram-yeyo,nurture",
       notas,
     }),
   });
   if (!res.ok) return `GHL respondió ${res.status}`;
-  await env.DB.prepare("UPDATE leads_ig SET ghl_enviado = ? WHERE usuario = ?").bind(new Date().toISOString(), l.usuario).run();
+  await env.DB.prepare("UPDATE leads_ig SET ghl_enviado = ?, ghl_estado = ? WHERE usuario = ?").bind(new Date().toISOString(), l.estado, l.usuario).run();
   return "enviado";
 }
 
