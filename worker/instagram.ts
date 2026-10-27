@@ -87,6 +87,15 @@ async function miCuenta(env: Env): Promise<{ id: string; username: string }> {
   return { id: String(yo.user_id), username: yo.username };
 }
 
+// Si Instagram rechaza la acción no pasa nada: es solo un detalle visual.
+async function accionChat(env: Env, igId: string, accion: "mark_seen" | "typing_on"): Promise<void> {
+  await ig(env, "/me/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ recipient: { id: igId }, sender_action: accion }),
+  }).catch(() => {});
+}
+
 async function enviarDm(env: Env, destino: { id: string } | { comment_id: string }, texto: string): Promise<{ mid: string; igId: string | null }> {
   const r = await ig<{ message_id: string; recipient_id?: string }>(env, "/me/messages", {
     method: "POST",
@@ -194,6 +203,9 @@ async function encolarDm(env: Env, igId: string): Promise<boolean> {
     await avisarPana(env, lead, igId);
     return false;
   }
+  // "Visto" y "escribiendo…" mientras Claude piensa: la persona sabe que ya la están atendiendo.
+  await accionChat(env, igId, "mark_seen");
+  await accionChat(env, igId, "typing_on");
   const perfil = await ig<Perfil>(env, `/${igId}?fields=username,name,follower_count,is_user_follow_business`).catch(() => ({}) as Perfil);
   const { results } = await env.DB.prepare("SELECT id, rol, texto, fecha FROM mensajes_ig WHERE ig_id = ? ORDER BY id DESC LIMIT 20")
     .bind(igId)
