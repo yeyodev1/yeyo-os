@@ -10,9 +10,6 @@ const TEXTOS_AUTOMATICOS = ["¡Buenas! 🎉 Vi tu comentario", "¡Qué más! �
 // Solo se calla del todo con quien Diego ya atiende a mano. Panas, ruido y los que no calificaron
 // pasan otra vez por Claude: si vuelven con interés de negocio, la conversación sigue.
 const NO_SE_LE_ESCRIBE = ["diego"];
-// Palabras de la regla "Comentario a DM" de Buzzfy (contiene, sin mayúsculas). Si Buzzfy cambia la
-// regla, actualizar aquí para que no reciban dos respuestas.
-const PALABRAS_BUZZFY = ["bakano", "info", "web", "precio", "cuanto", "cuánto", "interesa", "quiero", "cotiza", "pagina", "página", "tienda", "online", "automatiza", "dashboard", "asesoria", "asesoría", "link"];
 
 type LeadIg = Lead & { ig_id: string | null; mensajes_bot: number; ultimo_envio: string | null; ultimo_visto: string | null; notas: string | null };
 type Perfil = { username?: string; name?: string; follower_count?: number; is_user_follow_business?: boolean };
@@ -428,14 +425,13 @@ async function marcarComentario(env: Env, m: Media, c: Comentario, accion: strin
 }
 
 async function manejarComentario(env: Env, m: Media, c: Comentario): Promise<void> {
+  // Lo que escribe la propia cuenta (respuestas del bot o de Diego) también llega por el webhook.
+  const yo = await miCuenta(env);
+  if (c.from?.id === yo.id || (c.from?.username ?? c.username) === yo.username) return;
   // Se marca antes de pensar: el webhook y el cron no pueden contestar el mismo comentario.
   if (!(await marcarComentario(env, m, c, "procesando"))) return;
   if (await pausado(env)) {
     await env.DB.prepare("UPDATE comentarios_ig SET accion = 'pausa' WHERE id = ?").bind(c.id).run();
-    return;
-  }
-  if (PALABRAS_BUZZFY.some((p) => (c.text ?? "").toLowerCase().includes(p))) {
-    await env.DB.prepare("UPDATE comentarios_ig SET accion = 'buzzfy' WHERE id = ?").bind(c.id).run();
     return;
   }
   const usuario = c.from?.username ?? c.username ?? null;
