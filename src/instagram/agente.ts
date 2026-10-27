@@ -5,6 +5,7 @@ import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { PROMPT_COMENTARIO, PROMPT_DM } from "../../worker/prompts.ts";
 import { correrAgente, ok, sinApertura } from "../comun/agente.ts";
+import { verWeb } from "./web.ts";
 
 type Pensamiento = { id: number; tipo: "dm" | "comentario"; contenido: string };
 type Decision = Record<string, unknown>;
@@ -37,6 +38,20 @@ const ESQUEMA_COMENTARIO = {
 const limpiar = (d: Decision): Decision =>
   Object.fromEntries(Object.entries(d).map(([k, v]) => [k, typeof v === "string" && ["respuesta", "publica", "dm"].includes(k) ? sinApertura(v) : v]));
 
+// Para la web o tienda que comparta un lead: Chrome de verdad, así también se leen las hechas con JavaScript.
+const herramientaWeb = tool(
+  "ver_web",
+  "Abre la web o tienda de un lead con un navegador real (también las hechas con JavaScript) y devuelve lo que se ve más señales de venta: WhatsApp, carrito, pago en línea, plataforma, si se ve bien en celular, reservas y precios.",
+  { url: z.string().describe("la web tal como la pasó, por ejemplo mitienda.com") },
+  async ({ url }) => {
+    try {
+      return ok(await verWeb(url));
+    } catch (e) {
+      return ok(`No pude abrir ${url}: ${String(e).slice(0, 200)}`);
+    }
+  },
+);
+
 async function pensar(p: Pensamiento): Promise<Decision | null> {
   let decision: Decision | null = null;
   const guardar = async (d: Decision) => {
@@ -49,9 +64,9 @@ async function pensar(p: Pensamiento): Promise<Decision | null> {
       : tool("comentario", "Cómo responder este comentario según la publicación.", ESQUEMA_COMENTARIO, guardar);
   await correrAgente({
     prompt: `${p.tipo === "dm" ? PROMPT_DM : PROMPT_COMENTARIO}\n\n${p.contenido}\n\nLlama la herramienta ${p.tipo === "dm" ? "decidir" : "comentario"} UNA sola vez con tu decisión y termina.`,
-    herramientas: [herramienta],
-    // Si el lead pasa el link de su web, la abre (WebFetch) para decirle qué tiene y qué le falta.
-    web: p.tipo === "dm" && /https?:\/\/|www\.|\.(com|ec|net|org|store|shop|co)\b/i.test(p.contenido),
+    // Si el lead pasa el link de su web, la abre (ver_web) para decirle qué tiene y qué le falta.
+    herramientas: p.tipo === "dm" && /https?:\/\/|www\.|\.(com|ec|net|org|store|shop|co)\b/i.test(p.contenido) ? [herramienta, herramientaWeb] : [herramienta],
+    web: false,
     effort: "low",
     maxTurns: 8,
   });
