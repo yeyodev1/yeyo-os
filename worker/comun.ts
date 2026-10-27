@@ -18,6 +18,7 @@ export interface Env {
   IG_APP_SECRET?: string; // la otra clave de la app (la de Instagram); la firma puede venir con esta
   META_VERIFY_TOKEN?: string; // lo pide Meta al suscribir el webhook
   IG_TOKEN?: string; // token largo inicial; luego se renueva solo y vive en config ig_token
+  BOVEDA_KEY?: string; // AES-256 en base64 para la bóveda de claves de Diego (worker/boveda.ts)
 }
 
 export function igualSeguro(a: string, b: string): boolean {

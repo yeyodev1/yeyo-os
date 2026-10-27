@@ -3,6 +3,7 @@
 // El Agent SDK no corre aquí (necesita lanzar un proceso); el motor de Instagram, que tiene que
 // contestar al instante, llama a Claude directo por la Messages API.
 import { type Env, type Lead, avisarInstagram, config, escapar, guardarConfig, igualSeguro, leadAGhl, responder, telefonoE164, telegram } from "./comun";
+import { borrarVencidos, comandoBoveda, mostrarClave, pareceClave } from "./boveda";
 import { enviarDesdePana, pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, hacerSeguimientos, rescatarPensamientos, revisarComentarios, sincronizarVideos, verificarFirmaMeta, videosInstagram } from "./instagram";
 
 type Mensaje = {
@@ -62,7 +63,7 @@ export default {
     // Responder rápido a Telegram; el trabajo sigue en segundo plano.
     const fallo = (e: unknown) => responder(env, `⚠️ Algo falló en el Worker: ${escapar(String(e))}`);
     if (update.message) ctx.waitUntil(atender(update.message, env).catch(fallo));
-    if (update.callback_query) ctx.waitUntil(botonRecordatorio(update.callback_query, env).catch(fallo));
+    if (update.callback_query) ctx.waitUntil(boton(update.callback_query, env).catch(fallo));
     return new Response("ok");
   },
 
@@ -73,6 +74,7 @@ export default {
     }
     // Este cron corre cada minuto por los recordatorios; lo demás va solo en el minuto 0.
     await enviarRecordatorios(env).catch((e) => console.error("Recordatorios:", e));
+    await borrarVencidos(env).catch((e) => console.error("Bóveda:", e));
     // Los comentarios no llegan por webhook sin Advanced Access: se revisan cada minuto.
     await revisarComentarios(env).catch((e) => console.error("Comentarios IG:", e));
     await rescatarPensamientos(env).catch((e) => console.error("Cola IG:", e));
@@ -239,6 +241,7 @@ async function consultaAgentes(req: Request, env: Env): Promise<Response> {
   const auth = req.headers.get("Authorization") ?? "";
   if (!env.AGENTES_SECRET || !igualSeguro(auth, `Bearer ${env.AGENTES_SECRET}`)) return new Response("no", { status: 401 });
   const { sql, params = [] } = (await req.json()) as { sql: string; params?: unknown[] };
+  if (/\bboveda\b/i.test(sql)) return Response.json({ error: "La bóveda es solo de Diego" }, { status: 403 });
   try {
     const { results } = await env.DB.prepare(sql).bind(...params).all();
     return Response.json({ results });
@@ -288,6 +291,11 @@ async function atender(m: Mensaje, env: Env): Promise<void> {
       return responder(env, await estado(env));
     case "/recordatorios":
       return responder(env, await listaRecordatorios(env));
+    case "/guardar":
+    case "/clave":
+    case "/claves":
+    case "/olvidar":
+      return comandoBoveda(env, comando.toLowerCase().replace(/@\w+$/, ""), texto, m.chat.id, m.message_id);
     case "/start":
     case "/ayuda":
       return responder(env, AYUDA);
@@ -304,6 +312,12 @@ async function atender(m: Mensaje, env: Env): Promise<void> {
     return reaccionar(env, m, "👌");
   }
   if (!texto) return responder(env, "🙈 Por ahora entiendo texto, links y fotos. Notas de voz pronto.");
+
+  // Una clave pegada en la conversación iría a la memoria y a Claude: se borra y se manda a la bóveda.
+  if (pareceClave(texto)) {
+    await telegram(env, "deleteMessage", { chat_id: m.chat.id, message_id: m.message_id });
+    return responder(env, "🔐 <b>Eso parecía una clave y borré tu mensaje</b>, para que no quede en mi memoria 🧹\n\nGuárdala cifrada así:\n<code>/guardar nombre la-clave</code>\n\nY me la pides con /claves");
+  }
 
   // Conversación: la contesta el agente de chat en GitHub Actions (~1 min).
   const conFoto = foto ? `${texto}\n[adjuntó una foto: tg:${foto.file_id}]` : texto;
@@ -360,9 +374,18 @@ function proximaVez(cuando: string, repetir: string): string {
   return d.toISOString();
 }
 
-async function botonRecordatorio(b: Boton, env: Env): Promise<void> {
+async function boton(b: Boton, env: Env): Promise<void> {
   env.TELEGRAM_CHAT_ID ||= (await config(env, "telegram_chat_id")) ?? undefined;
   if (String(b.from.id) !== env.TELEGRAM_CHAT_ID || !b.message || !b.data) return;
+  if (b.data.startsWith("ver:")) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: b.id, text: "🔓 Ahí va" });
+    return mostrarClave(env, b.data.slice(4));
+  }
+  return botonRecordatorio(b, env);
+}
+
+async function botonRecordatorio(b: Boton, env: Env): Promise<void> {
+  if (!b.message || !b.data) return;
   const [accion, minutos, idTexto] = b.data.split(":");
   const id = Number(accion === "ok" ? minutos : idTexto);
   const r = await env.DB.prepare("SELECT id, texto, cuando, repetir FROM recordatorios WHERE id = ?").bind(id).first<Recordatorio>();
@@ -463,6 +486,12 @@ Tu piquero de confianza para X y LinkedIn.
 • "recuérdame mañana a las 10 llamar al contador"
 • "todos los lunes a las 8 revisar métricas"
 ⏰ /recordatorios · ver los pendientes
+
+🔐 <b>Bóveda</b> (cifrada, no pasa por la IA)
+• /guardar cloudflare cfut_xxx · la guardo y borro tu mensaje
+• /claves · tus claves, toca una para verla
+• /clave cloudflare · te la muestro tapada y se borra sola
+• /olvidar cloudflare · la borro
 
 📊 /estado · cómo van los agentes
 ⏸️ /pausa x · /pausa linkedin · /pausa (todo)

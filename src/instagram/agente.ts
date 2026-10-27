@@ -38,9 +38,15 @@ const ESQUEMA_COMENTARIO = {
 // Diego no usa ¿ ni ¡ ni punto final: se quitan de lo que sale publicado aunque el modelo los
 // ponga ("..." se respeta).
 const sinPuntoFinal = (t: string) => t.split("\n").map((l) => l.replace(/(?<!\.)\.\s*$/, "").trimEnd()).join("\n");
+// A veces el modelo escribe "\\n" literal en vez del salto de línea: llegaba así a Instagram y a Telegram.
+const conSaltos = (t: string) => t.replace(/\\n/g, "\n");
 const limpiar = (d: Decision): Decision =>
   Object.fromEntries(
-    Object.entries(d).map(([k, v]) => [k, typeof v === "string" && ["respuesta", "publica", "dm"].includes(k) ? sinPuntoFinal(sinApertura(v)) : v]),
+    Object.entries(d).map(([k, v]) => {
+      if (typeof v !== "string") return [k, v];
+      const t = conSaltos(v);
+      return [k, ["respuesta", "publica", "dm"].includes(k) ? sinPuntoFinal(sinApertura(t)) : t];
+    }),
   );
 
 // Para la web o tienda que comparta un lead: Chrome de verdad, así también se leen las hechas con JavaScript.
