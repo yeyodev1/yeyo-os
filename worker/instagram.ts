@@ -212,7 +212,7 @@ async function encolarDm(env: Env, igId: string): Promise<boolean> {
     .all<{ id: number; rol: string; texto: string; fecha: string }>();
   // Lo que pasó antes de que existiera el bot solo está en Instagram: en el primer contacto se trae.
   const previos = lead.mensajes_bot === 0 && results.length <= 2 ? await historialPrevio(env, igId) : "";
-  const quien: Record<string, string> = { lead: "Lead", bot: "Asistente", diego: "Diego", auto: "Automático" };
+  const quien: Record<string, string> = { lead: "Lead", bot: "Tú", diego: "Diego (a mano)", auto: "Automático" };
   const ultimoLead = Math.max(0, ...results.filter((r) => r.rol === "lead").map((r) => r.id));
   const conversacion = [...results]
     .reverse()
