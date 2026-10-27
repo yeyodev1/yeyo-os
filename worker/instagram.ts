@@ -312,7 +312,7 @@ async function historialPrevio(env: Env, igId: string): Promise<string> {
   }
 }
 
-// Cada minuto: comentarios nuevos de las últimas 5 publicaciones. Sin Advanced Access Meta no
+// Cada minuto: comentarios nuevos de las últimas 10 publicaciones (los trial reels también cuentan). Sin Advanced Access Meta no
 // manda el webhook de comentarios, así que se leen por la API (lectura de la propia cuenta).
 const MAX_COMENTARIOS_POR_MINUTO = 5; // los Workers tienen tope de subrequests por ejecución
 
@@ -320,7 +320,9 @@ export async function revisarComentarios(env: Env): Promise<void> {
   if (!(await token(env))) return; // la app de Meta todavía no está conectada
   const yo = await miCuenta(env);
   const media = await mediaReciente(env);
-  const primeraVez = !(await env.DB.prepare("SELECT 1 FROM comentarios_ig LIMIT 1").first());
+  // La marca va en config y no en "tabla vacía": si los posts recientes no tienen comentarios,
+  // el primero que llegue después igual se contesta.
+  const primeraVez = !(await config(env, "ig_comentarios_desde"));
   const enPausa = await pausado(env);
   let atendidos = 0;
   for (const m of media) {
@@ -343,6 +345,7 @@ export async function revisarComentarios(env: Env): Promise<void> {
       await manejarComentario(env, m, c).catch(fallo(env, "comentario"));
     }
   }
+  if (primeraVez) await guardarConfig(env, "ig_comentarios_desde", ahora());
 }
 
 async function mediaReciente(env: Env): Promise<Media[]> {
@@ -351,7 +354,7 @@ async function mediaReciente(env: Env): Promise<Media[]> {
     const { fecha, media } = JSON.parse(cache) as { fecha: number; media: Media[] };
     if (Date.now() - fecha < 10 * 60_000) return media;
   }
-  const { data = [] } = await ig<{ data?: Media[] }>(env, "/me/media?fields=id,caption,permalink,media_type,timestamp&limit=5");
+  const { data = [] } = await ig<{ data?: Media[] }>(env, "/me/media?fields=id,caption,permalink,media_type,timestamp&limit=10");
   await guardarConfig(env, "ig_media_cache", JSON.stringify({ fecha: Date.now(), media: data }));
   return data;
 }
