@@ -3,7 +3,7 @@
 // El Agent SDK no corre aquí (necesita lanzar un proceso); el motor de Instagram, que tiene que
 // contestar al instante, llama a Claude directo por la Messages API.
 import { type Env, type Lead, avisarInstagram, config, escapar, guardarConfig, igualSeguro, leadAGhl, responder, telefonoE164, telegram } from "./comun";
-import { pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, revisarComentarios, verificarFirmaMeta } from "./instagram";
+import { pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, rescatarPensamientos, revisarComentarios, verificarFirmaMeta } from "./instagram";
 
 type Mensaje = {
   message_id: number;
@@ -73,6 +73,7 @@ export default {
     await enviarRecordatorios(env).catch((e) => console.error("Recordatorios:", e));
     // Los comentarios no llegan por webhook sin Advanced Access: se revisan cada minuto.
     await revisarComentarios(env).catch((e) => console.error("Comentarios IG:", e));
+    await rescatarPensamientos(env).catch((e) => console.error("Cola IG:", e));
     if (new Date(evento.scheduledTime).getUTCMinutes() !== 0) return;
     if (new Date(evento.scheduledTime).getUTCHours() === 4) await refrescarTokenIg(env).catch((e) => console.error("Token IG:", e));
     await sincronizarGithub(env).catch((e) => console.error("GitHub:", e));

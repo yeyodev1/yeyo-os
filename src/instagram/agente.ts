@@ -60,13 +60,21 @@ async function devolver(id: number, decision: Decision | null): Promise<void> {
   if (!res.ok) console.error(`El Worker respondió ${res.status} al aplicar #${id}: ${await res.text()}`);
 }
 
-// Sigue mientras lleguen cosas nuevas, con tope de tiempo para no dejar el runner colgado.
-const fin = Date.now() + 4 * 60_000;
-while (Date.now() < fin) {
+// Se queda escuchando la cola mientras haya conversación: así solo el primer mensaje de cada tanda
+// paga el arranque de Actions (~18 s). Se apaga tras 20 min sin nada y antes del tope de 6 h.
+const INACTIVO_MAX = 20 * 60_000;
+const VIDA_MAX = 5.5 * 3_600_000;
+const inicio = Date.now();
+let ultimoTrabajo = Date.now();
+const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function pedirCola(): Promise<Pensamiento[]> {
   const res = await fetch(URL_COLA, { headers: CABECERAS });
   if (!res.ok) throw new Error(`El Worker respondió ${res.status} al pedir la cola`);
-  const { pensamientos } = (await res.json()) as { pensamientos: Pensamiento[] };
-  if (!pensamientos.length) break;
+  return ((await res.json()) as { pensamientos: Pensamiento[] }).pensamientos;
+}
+
+async function atender(pensamientos: Pensamiento[]): Promise<void> {
   console.log(`Pensando ${pensamientos.length}: ${pensamientos.map((p) => `#${p.id} ${p.tipo}`).join(", ")}`);
   await Promise.all(
     pensamientos.map(async (p) => {
@@ -77,5 +85,21 @@ while (Date.now() < fin) {
       await devolver(p.id, decision);
     }),
   );
+  ultimoTrabajo = Date.now();
 }
-console.log("Cola vacía.");
+
+while (Date.now() - ultimoTrabajo < INACTIVO_MAX && Date.now() - inicio < VIDA_MAX) {
+  const pensamientos = await pedirCola().catch((e) => {
+    console.error(e);
+    return [];
+  });
+  if (pensamientos.length) await atender(pensamientos);
+  else await dormir(1500);
+}
+
+// Antes de irse avisa al Worker (vuelve a disparar el workflow con lo próximo) y revisa una
+// última vez por si algo entró justo en ese momento.
+await fetch(URL_COLA, { method: "POST", headers: CABECERAS, body: JSON.stringify({ adios: true }) });
+const ultimos = await pedirCola();
+if (ultimos.length) await atender(ultimos);
+console.log("Me apago: 20 min sin mensajes.");

@@ -3,8 +3,8 @@ name: Instagram
 on:
   workflow_dispatch:
 
-# Uno a la vez: cada ejecución piensa todo lo pendiente en la cola del Worker. Si llegan más
-# mientras corre, GitHub deja una ejecución en espera y esa recoge lo nuevo.
+# Uno a la vez: el run se queda escuchando la cola del Worker mientras haya conversación. Si
+# llega algo cuando ya se apagó, el Worker dispara otro.
 concurrency:
   group: instagram
   cancel-in-progress: false
@@ -15,7 +15,8 @@ permissions:
 jobs:
   pensar:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    # Se queda escuchando hasta 20 min sin mensajes (máximo 5,5 h por run).
+    timeout-minutes: 345
     env:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

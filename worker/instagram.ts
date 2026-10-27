@@ -157,7 +157,7 @@ async function manejarDm(env: Env, ev: Evento): Promise<void> {
   if (await pausado(env)) return;
 
   // La gente manda varios mensajes seguidos: se espera un poco y se atiende solo el último.
-  await dormir(5000);
+  await dormir(3000);
   const masNuevo = await env.DB.prepare("SELECT 1 FROM mensajes_ig WHERE ig_id = ? AND rol = 'lead' AND id > ?").bind(igId, miId).first();
   if (masNuevo) return;
   await atenderLead(env, igId);
@@ -430,6 +430,9 @@ async function encolar(env: Env, tipo: Pensamiento["tipo"], ref: string, conteni
 // Un run procesa todo lo pendiente; si ya hay uno corriendo, GitHub deja uno en espera y ese lo
 // recoge al terminar. Por eso basta con disparar en cada encolado.
 async function dispararPensador(env: Env): Promise<void> {
+  // Si un run ya está escuchando la cola (latido de hace menos de 60 s), lo toma en ~1 s.
+  const latido = await config(env, "ig_pensador_latido");
+  if (latido && Date.now() - Date.parse(latido) < 60_000) return;
   const res = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/instagram.yml/dispatches`, {
     method: "POST",
     headers: { Authorization: `Bearer ${env.GH_TOKEN_DISPARO}`, Accept: "application/vnd.github+json", "User-Agent": "cerebro-yeyo" },
@@ -444,6 +447,7 @@ export async function pensamientosInstagram(req: Request, env: Env): Promise<Res
   const auth = req.headers.get("Authorization") ?? "";
   if (!env.AGENTES_SECRET || !igualSeguro(auth, `Bearer ${env.AGENTES_SECRET}`)) return new Response("no", { status: 401 });
   if (req.method === "GET") {
+    await guardarConfig(env, "ig_pensador_latido", ahora());
     const corte = new Date(Date.now() - 5 * 60_000).toISOString();
     const { results } = await env.DB.prepare(
       "SELECT id, tipo, contenido FROM pensamientos_ig WHERE estado = 'pendiente' AND (tomado IS NULL OR tomado < ?) ORDER BY id LIMIT 10",
@@ -458,7 +462,13 @@ export async function pensamientosInstagram(req: Request, env: Env): Promise<Res
     return Response.json({ pensamientos: results });
   }
   if (req.method !== "POST") return new Response("no", { status: 405 });
-  const { id, decision } = (await req.json()) as { id?: number; decision?: Decision | DecisionComentario | null };
+  const cuerpo = (await req.json()) as { id?: number; decision?: Decision | DecisionComentario | null; adios?: boolean };
+  // El run se va a apagar: desde ahora cada encolado vuelve a disparar el workflow.
+  if (cuerpo.adios) {
+    await env.DB.prepare("DELETE FROM config WHERE clave = 'ig_pensador_latido'").run();
+    return Response.json({ ok: true });
+  }
+  const { id, decision } = cuerpo;
   // Se marca primero: si Actions reintenta el POST, la decisión no se aplica dos veces.
   const tomado = await env.DB.prepare("UPDATE pensamientos_ig SET estado = ? WHERE id = ? AND estado = 'pendiente'")
     .bind(decision ? "hecho" : "fallido", id ?? 0)
@@ -480,4 +490,18 @@ export async function pensamientosInstagram(req: Request, env: Env): Promise<Res
     await fallo(env, p.tipo)(e);
     return Response.json({ error: String(e) }, { status: 500 });
   }
+}
+
+// Cada minuto: si algo lleva más de 45 s en cola sin que nadie lo tome, se vuelve a disparar
+// (un run que se cayó o un encolado justo cuando el pensador se apagaba).
+export async function rescatarPensamientos(env: Env): Promise<void> {
+  const corte = new Date(Date.now() - 45_000).toISOString();
+  const atascado = await env.DB.prepare(
+    "SELECT 1 FROM pensamientos_ig WHERE estado = 'pendiente' AND creado < ? AND (tomado IS NULL OR tomado < ?) LIMIT 1",
+  )
+    .bind(corte, new Date(Date.now() - 5 * 60_000).toISOString())
+    .first();
+  if (!atascado) return;
+  await env.DB.prepare("DELETE FROM config WHERE clave = 'ig_pensador_latido'").run();
+  await dispararPensador(env);
 }
