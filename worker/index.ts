@@ -3,7 +3,7 @@
 // El Agent SDK no corre aquí (necesita lanzar un proceso); el motor de Instagram, que tiene que
 // contestar al instante, llama a Claude directo por la Messages API.
 import { type Env, type Lead, avisarInstagram, config, escapar, guardarConfig, igualSeguro, leadAGhl, responder, telefonoE164, telegram } from "./comun";
-import { enviarDesdePana, pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, rescatarPensamientos, revisarComentarios, verificarFirmaMeta } from "./instagram";
+import { enviarDesdePana, pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, rescatarPensamientos, revisarComentarios, sincronizarVideos, verificarFirmaMeta, videosInstagram } from "./instagram";
 
 type Mensaje = {
   message_id: number;
@@ -36,6 +36,7 @@ export default {
     if (url.pathname === "/api/instagram/leads") return leadsInstagram(req, env);
     if (url.pathname === "/api/instagram/pensamientos") return pensamientosInstagram(req, env);
     if (url.pathname === "/api/instagram/enviar") return enviarDesdePana(req, env);
+    if (url.pathname === "/api/instagram/videos") return videosInstagram(req, env);
     // Webhook de la app de Meta: DMs (y comentarios cuando Meta dé Advanced Access) al instante.
     if (url.pathname === "/instagram") {
       if (req.method === "GET") {
@@ -77,6 +78,7 @@ export default {
     await rescatarPensamientos(env).catch((e) => console.error("Cola IG:", e));
     if (new Date(evento.scheduledTime).getUTCMinutes() !== 0) return;
     if (new Date(evento.scheduledTime).getUTCHours() === 4) await refrescarTokenIg(env).catch((e) => console.error("Token IG:", e));
+    await sincronizarVideos(env).catch((e) => console.error("Videos IG:", e));
     await sincronizarGithub(env).catch((e) => console.error("GitHub:", e));
     await sincronizarVercel(env).catch((e) => console.error("Vercel:", e));
     const hora = (new Date(evento.scheduledTime).getUTCHours() + 19) % 24; // UTC-5, Ecuador no tiene horario de verano

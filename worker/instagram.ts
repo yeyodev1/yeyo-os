@@ -215,7 +215,10 @@ async function describirMensaje(env: Env, m: NonNullable<Evento["message"]>): Pr
   for (const a of m.attachments ?? []) {
     const reel = a.payload?.reel_video_id;
     const tuyo = reel ? propios.find((x) => x.id === reel) : undefined;
-    if (tuyo) partes.push(`[compartió TU video: "${(tuyo.caption ?? "").slice(0, 300)}" ${tuyo.permalink ?? ""}]`);
+    if (tuyo) {
+      const resumen = await resumenVideo(env, tuyo.id);
+      partes.push(`[compartió TU video: "${(tuyo.caption ?? "").slice(0, 300)}" ${tuyo.permalink ?? ""}${resumen ? ` · De qué va: ${resumen}` : ""}]`);
+    }
     else if (reel || ["ig_reel", "reel", "share"].includes(a.type)) {
       partes.push(`[compartió un reel${a.payload?.title ? `: "${a.payload.title.slice(0, 300)}"` : ""}${a.payload?.url ? ` ${a.payload.url}` : ""}]`);
     } else partes.push(`[mandó ${{ image: "una foto", video: "un video", audio: "un audio", story_mention: "una historia donde te menciona" }[a.type] ?? a.type}]`);
@@ -436,7 +439,8 @@ async function manejarComentario(env: Env, m: Media, c: Comentario): Promise<voi
     return;
   }
   const usuario = c.from?.username ?? c.username ?? null;
-  const contenido = `<publicacion>\nTipo: ${m.media_type ?? "—"}\nLink: ${m.permalink ?? "—"}\nCaption:\n${m.caption ?? "(sin caption)"}\n</publicacion>\n<comentario>\n@${usuario ?? "alguien"}: ${c.text ?? ""}\n</comentario>`;
+  const resumen = await resumenVideo(env, m.id);
+  const contenido = `<publicacion>\nTipo: ${m.media_type ?? "—"}\nLink: ${m.permalink ?? "—"}\nCaption:\n${m.caption ?? "(sin caption)"}${resumen ? `\nDe qué va el video (lo que se ve y se dice): ${resumen}` : ""}\n</publicacion>\n<comentario>\n@${usuario ?? "alguien"}: ${c.text ?? ""}\n</comentario>`;
   await encolar(env, "comentario", c.id, contenido, { media: m, comentario: c });
 }
 
@@ -613,4 +617,63 @@ export async function enviarDesdePana(req: Request, env: Env): Promise<Response>
     // El error típico: pasaron más de 24 h desde su último mensaje y Instagram ya no deja escribirle.
     return Response.json({ error: String(e).slice(0, 300) }, { status: 502 });
   }
+}
+
+// --- De qué va cada video: se transcribe y se resume en GitHub Actions (workflow videos.yml) ---
+
+async function resumenVideo(env: Env, mediaId: string): Promise<string | null> {
+  return env.DB.prepare("SELECT resumen FROM videos_ig WHERE media_id = ? AND estado = 'hecho'").bind(mediaId).first<string>("resumen");
+}
+
+// Cada hora: los videos nuevos quedan pendientes y se dispara el workflow que los ve y resume.
+export async function sincronizarVideos(env: Env): Promise<void> {
+  if (!(await token(env))) return;
+  const { data = [] } = await ig<{ data?: Media[] }>(env, "/me/media?fields=id,caption,permalink,media_type,timestamp&limit=25");
+  for (const m of data.filter((x) => x.media_type === "VIDEO" || x.media_type === "REELS")) {
+    await env.DB.prepare("INSERT OR IGNORE INTO videos_ig (media_id, permalink, caption, publicado, actualizado) VALUES (?, ?, ?, ?, ?)")
+      .bind(m.id, m.permalink ?? null, m.caption ?? null, m.timestamp ?? null, ahora())
+      .run();
+  }
+  const pendiente = await env.DB.prepare("SELECT 1 FROM videos_ig WHERE estado = 'pendiente' AND intentos < 3 LIMIT 1").first();
+  if (!pendiente) return;
+  const res = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/videos.yml/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.GH_TOKEN_DISPARO}`, Accept: "application/vnd.github+json", "User-Agent": "cerebro-yeyo" },
+    body: JSON.stringify({ ref: "main" }),
+  });
+  if (res.status !== 204) throw new Error(`GitHub respondió ${res.status} al disparar videos.yml`);
+}
+
+// GET: videos pendientes con su URL de descarga fresca (caduca, por eso se pide en el momento).
+// POST {media_id, transcripcion, resumen} guarda; sin resumen cuenta como intento fallido.
+export async function videosInstagram(req: Request, env: Env): Promise<Response> {
+  const auth = req.headers.get("Authorization") ?? "";
+  if (!env.AGENTES_SECRET || !igualSeguro(auth, `Bearer ${env.AGENTES_SECRET}`)) return new Response("no", { status: 401 });
+  if (req.method === "GET") {
+    const { results } = await env.DB.prepare(
+      "SELECT media_id, permalink, caption FROM videos_ig WHERE estado = 'pendiente' AND intentos < 3 ORDER BY publicado DESC LIMIT 5",
+    ).all<{ media_id: string; permalink: string | null; caption: string | null }>();
+    const videos = [];
+    for (const v of results) {
+      const m = await ig<{ media_url?: string }>(env, `/${v.media_id}?fields=media_url`).catch(() => ({}) as { media_url?: string });
+      if (m.media_url) videos.push({ ...v, media_url: m.media_url });
+      else await env.DB.prepare("UPDATE videos_ig SET intentos = intentos + 1, actualizado = ? WHERE media_id = ?").bind(ahora(), v.media_id).run();
+    }
+    return Response.json({ videos });
+  }
+  if (req.method !== "POST") return new Response("no", { status: 405 });
+  const { media_id, transcripcion = null, resumen = null } = (await req.json()) as { media_id?: string; transcripcion?: string | null; resumen?: string | null };
+  if (!media_id) return Response.json({ error: "Falta media_id" }, { status: 400 });
+  if (resumen?.trim()) {
+    await env.DB.prepare("UPDATE videos_ig SET estado = 'hecho', transcripcion = ?, resumen = ?, actualizado = ? WHERE media_id = ?")
+      .bind(transcripcion?.slice(0, 8000) ?? null, resumen.trim().slice(0, 1500), ahora(), media_id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "UPDATE videos_ig SET intentos = intentos + 1, estado = CASE WHEN intentos + 1 >= 3 THEN 'fallido' ELSE 'pendiente' END, actualizado = ? WHERE media_id = ?",
+    )
+      .bind(ahora(), media_id)
+      .run();
+  }
+  return Response.json({ ok: true });
 }

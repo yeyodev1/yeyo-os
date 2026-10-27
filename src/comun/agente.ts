@@ -11,13 +11,15 @@ type Opciones = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   herramientas: SdkMcpToolDefinition<any>[];
   web?: boolean;
+  // Leer archivos locales (por ejemplo capturas de un video): habilita la herramienta Read.
+  leerArchivos?: boolean;
   effort?: "low" | "medium" | "high";
   maxTurns?: number;
 };
 
 // Devuelve el texto final del agente (vacío si terminó con error).
-export async function correrAgente({ prompt, herramientas, web = true, effort = "high", maxTurns = 25 }: Opciones): Promise<string> {
-  const integradas = web ? ["WebSearch", "WebFetch"] : [];
+export async function correrAgente({ prompt, herramientas, web = true, leerArchivos = false, effort = "high", maxTurns = 25 }: Opciones): Promise<string> {
+  const integradas = [...(web ? ["WebSearch", "WebFetch"] : []), ...(leerArchivos ? ["Read"] : [])];
   let final = "";
   for await (const msg of query({
     prompt,

@@ -1,0 +1,46 @@
+name: Videos
+
+on:
+  workflow_dispatch:
+
+# Lo dispara el Worker cada hora si hay videos nuevos en @yeyo.dev. Uno a la vez.
+concurrency:
+  group: videos
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resumir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AGENTES_URL: ${{ vars.AGENTES_URL }}
+      AGENTES_SECRET: ${{ secrets.AGENTES_SECRET }}
+      # Resumir un video es corto: Sonnet alcanza y sobra.
+      CLAUDE_MODEL: claude-sonnet-5-5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: modulos
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: modulos-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.modulos.outputs.cache-hit != 'true'
+        run: npm ci
+      # ffmpeg para audio y capturas; faster-whisper transcribe local (el modelo queda en caché).
+      - run: sudo apt-get install -y -qq ffmpeg > /dev/null
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/huggingface
+          key: whisper-small-v1
+      - run: pip install -q faster-whisper
+      - run: npm run videos
