@@ -7,7 +7,9 @@ import { type Env, type Lead, avisarInstagram, config, guardarConfig, igualSegur
 const GRAPH = "https://graph.instagram.com/v23.0";
 // Los textos del flujo de comentario→DM de Buzzfy llegan como eco sin ser de Diego.
 const TEXTOS_AUTOMATICOS = ["¡Buenas! 🎉 Vi tu comentario", "¡Qué más! 🙌 Aquí está la info"];
-const NO_SE_LE_ESCRIBE = ["diego", "ruido", "no_califica"];
+// Solo se calla del todo con quien Diego ya atiende a mano. Panas, ruido y los que no calificaron
+// pasan otra vez por Claude: si vuelven con interés de negocio, la conversación sigue.
+const NO_SE_LE_ESCRIBE = ["diego"];
 
 type LeadIg = Lead & { ig_id: string | null; mensajes_bot: number; ultimo_envio: string | null; notas: string | null };
 type Perfil = { username?: string; name?: string; follower_count?: number; is_user_follow_business?: boolean };
@@ -200,13 +202,11 @@ async function encolarDm(env: Env, igId: string): Promise<boolean> {
   const lead = await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>();
   if (!lead || NO_SE_LE_ESCRIBE.includes(lead.estado)) return false;
   if (lead.estado === "calificado" && lead.telefono) return false; // ya lo tiene Diego
-  if (lead.estado === "pana") {
-    await avisarPana(env, lead, igId);
-    return false;
+  // "Visto" y "escribiendo…" mientras Claude piensa, solo a quien seguramente se le va a contestar.
+  if (!["pana", "ruido"].includes(lead.estado)) {
+    await accionChat(env, igId, "mark_seen");
+    await accionChat(env, igId, "typing_on");
   }
-  // "Visto" y "escribiendo…" mientras Claude piensa: la persona sabe que ya la están atendiendo.
-  await accionChat(env, igId, "mark_seen");
-  await accionChat(env, igId, "typing_on");
   const perfil = await ig<Perfil>(env, `/${igId}?fields=username,name,follower_count,is_user_follow_business`).catch(() => ({}) as Perfil);
   const { results } = await env.DB.prepare("SELECT id, rol, texto, fecha FROM mensajes_ig WHERE ig_id = ? ORDER BY id DESC LIMIT 20")
     .bind(igId)
@@ -293,16 +293,6 @@ async function leadDe(env: Env, igId: string): Promise<{ lead: LeadIg; perfil: P
     lead = (await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>())!;
   }
   return { lead, perfil };
-}
-
-// A un pana no se le contesta: se le avisa a Diego una vez por tanda de mensajes.
-async function avisarPana(env: Env, lead: LeadIg, igId: string): Promise<void> {
-  const { results } = await env.DB.prepare("SELECT texto, fecha FROM mensajes_ig WHERE ig_id = ? AND rol = 'lead' ORDER BY id DESC LIMIT 2")
-    .bind(igId)
-    .all<{ texto: string; fecha: string }>();
-  const [ultimo, anterior] = results;
-  if (!ultimo || (anterior && Date.parse(ultimo.fecha) - Date.parse(anterior.fecha) < 3_600_000)) return;
-  await avisarInstagram(env, `👋 **Un pana te escribió** — @${lead.usuario}\n💬 Dijo: "${ultimo.texto.slice(0, 200)}"`);
 }
 
 async function historialPrevio(env: Env, igId: string): Promise<string> {
@@ -493,22 +483,45 @@ export async function pensamientosInstagram(req: Request, env: Env): Promise<Res
   const datos = JSON.parse(p.datos || "{}");
   try {
     if (!decision) {
-      if (p.tipo === "dm") await soltarCandado(env, p.ref);
+      if (p.tipo === "dm") await marcarVisto(env, p.ref);
       await avisarInstagram(env, `⚠️ **Instagram**: Claude no pudo decidir qué responder (${p.tipo} ${p.tipo === "dm" ? "de un lead" : "en un comentario"}). Revísalo a mano.`);
     } else if (p.tipo === "dm") await aplicarDm(env, p.ref, decision as Decision, datos);
     else await aplicarComentario(env, decision as DecisionComentario, datos);
     return Response.json({ ok: true });
   } catch (e) {
-    if (p.tipo === "dm") await soltarCandado(env, p.ref);
+    if (p.tipo === "dm") await marcarVisto(env, p.ref);
     await env.DB.prepare("UPDATE pensamientos_ig SET estado = 'fallido' WHERE id = ?").bind(p.id).run();
     await fallo(env, p.tipo)(e);
     return Response.json({ error: String(e) }, { status: 500 });
   }
 }
 
+async function marcarVisto(env: Env, igId: string): Promise<void> {
+  await env.DB.prepare("UPDATE leads_ig SET procesando = NULL, ultimo_visto = ? WHERE ig_id = ?").bind(ahora(), igId).run();
+}
+
+// Cada minuto: mensajes de leads que quedaron sin pasar por Claude (un webhook que se perdió, un
+// estado que antes los silenciaba). Solo de las últimas 24 h, que es la ventana para responder.
+async function rescatarSinResponder(env: Env): Promise<void> {
+  if (await pausado(env)) return;
+  const { results } = await env.DB.prepare(
+    `SELECT l.ig_id FROM leads_ig l
+     WHERE l.ig_id IS NOT NULL AND l.estado != 'diego' AND NOT (l.estado = 'calificado' AND l.telefono IS NOT NULL)
+       AND (l.procesando IS NULL OR l.procesando < ?)
+       AND EXISTS (SELECT 1 FROM mensajes_ig m WHERE m.ig_id = l.ig_id AND m.rol = 'lead'
+                   AND m.fecha > COALESCE(l.ultimo_visto, '') AND m.fecha > ? AND m.fecha < ?)
+       AND NOT EXISTS (SELECT 1 FROM pensamientos_ig p WHERE p.tipo = 'dm' AND p.ref = l.ig_id AND p.estado = 'pendiente')
+     LIMIT 3`,
+  )
+    .bind(new Date(Date.now() - 5 * 60_000).toISOString(), new Date(Date.now() - 24 * 3_600_000).toISOString(), new Date(Date.now() - 30_000).toISOString())
+    .all<{ ig_id: string }>();
+  for (const r of results) await atenderLead(env, r.ig_id);
+}
+
 // Cada minuto: si algo lleva más de 45 s en cola sin que nadie lo tome, se vuelve a disparar
 // (un run que se cayó o un encolado justo cuando el pensador se apagaba).
 export async function rescatarPensamientos(env: Env): Promise<void> {
+  await rescatarSinResponder(env);
   const corte = new Date(Date.now() - 45_000).toISOString();
   const atascado = await env.DB.prepare(
     "SELECT 1 FROM pensamientos_ig WHERE estado = 'pendiente' AND creado < ? AND (tomado IS NULL OR tomado < ?) LIMIT 1",
