@@ -3,7 +3,7 @@ name: Videos
 on:
   workflow_dispatch:
 
-# Lo dispara el Worker cada hora si hay videos nuevos en @yeyo.dev. Uno a la vez.
+# Lo dispara el Worker (revisa cada 5 min) si hay videos nuevos en @yeyo.dev. Uno a la vez.
 concurrency:
   group: videos
   cancel-in-progress: false
@@ -35,12 +35,12 @@ jobs:
       - if: steps.modulos.outputs.cache-hit != 'true'
         run: npm ci
       # ffmpeg para audio y capturas; faster-whisper transcribe local (el modelo queda en caché).
-      - run: sudo apt-get install -y -qq ffmpeg > /dev/null
+      - run: command -v ffmpeg || sudo apt-get install -y -qq ffmpeg > /dev/null
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/pip
             ~/.cache/huggingface
-          key: whisper-small-v1
-      - run: pip install -q faster-whisper
+          key: whisper-base-v1
+      - run: pip install -q faster-whisper numpy
       - run: npm run videos

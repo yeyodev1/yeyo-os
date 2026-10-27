@@ -625,7 +625,8 @@ async function resumenVideo(env: Env, mediaId: string): Promise<string | null> {
   return env.DB.prepare("SELECT resumen FROM videos_ig WHERE media_id = ? AND estado = 'hecho'").bind(mediaId).first<string>("resumen");
 }
 
-// Cada hora: los videos nuevos quedan pendientes y se dispara el workflow que los ve y resume.
+// Cada 5 min: los videos nuevos quedan pendientes y se dispara el workflow que los ve y resume
+// (solo si hay pendientes, así que casi siempre es una sola llamada a Instagram).
 export async function sincronizarVideos(env: Env): Promise<void> {
   if (!(await token(env))) return;
   const { data = [] } = await ig<{ data?: Media[] }>(env, "/me/media?fields=id,caption,permalink,media_type,timestamp&limit=25");

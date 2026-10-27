@@ -27,8 +27,7 @@ async function procesar(v: Video): Promise<void> {
   await writeFile(mp4, Buffer.from(await res.arrayBuffer()));
 
   const duracion = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", mp4], { encoding: "utf8" })) || 30;
-  execFileSync("ffmpeg", ["-v", "error", "-y", "-i", mp4, "-vn", "-ac", "1", "-ar", "16000", join(dir, "audio.wav")]);
-  const transcripcion = execFileSync("python3", ["scripts/transcribir.py", join(dir, "audio.wav")], { encoding: "utf8", maxBuffer: 10_000_000 }).trim();
+  const transcripcion = execFileSync("python3", ["scripts/transcribir.py", mp4], { encoding: "utf8", maxBuffer: 10_000_000 }).trim();
   const capturas = [0.15, 0.5, 0.85].map((p, i) => {
     const archivo = join(dir, `captura-${i + 1}.jpg`);
     execFileSync("ffmpeg", ["-v", "error", "-y", "-ss", String(duracion * p), "-i", mp4, "-frames:v", "1", "-vf", "scale=540:-2", archivo]);
@@ -71,17 +70,23 @@ ${voz.slice(0, 2500)}
   console.log(`${v.permalink ?? v.media_id}: ${resumen ? "resumido" : "sin resumen"}`);
 }
 
-// Hasta 5 videos por pedido; sigue mientras queden pendientes (la primera vez son los últimos 25).
-for (let ronda = 0; ronda < 6; ronda++) {
+// Hasta 5 videos por pedido, de 3 en 3 a la vez; sigue mientras queden pendientes (la primera
+// vez son los últimos 25).
+const A_LA_VEZ = 3;
+for (let ronda = 0; ronda < 8; ronda++) {
   const res = await fetch(URL_VIDEOS, { headers: CABECERAS });
   if (!res.ok) throw new Error(`El Worker respondió ${res.status}`);
   const { videos } = (await res.json()) as { videos: Video[] };
   if (!videos.length) break;
-  for (const v of videos) {
-    await procesar(v).catch(async (e) => {
-      console.error(`${v.media_id}:`, e);
-      await guardar(v.media_id, null, null);
-    });
+  for (let i = 0; i < videos.length; i += A_LA_VEZ) {
+    await Promise.all(
+      videos.slice(i, i + A_LA_VEZ).map((v) =>
+        procesar(v).catch(async (e) => {
+          console.error(`${v.media_id}:`, e);
+          await guardar(v.media_id, null, null);
+        }),
+      ),
+    );
   }
 }
 console.log("Videos al día.");

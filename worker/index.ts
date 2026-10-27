@@ -76,9 +76,10 @@ export default {
     // Los comentarios no llegan por webhook sin Advanced Access: se revisan cada minuto.
     await revisarComentarios(env).catch((e) => console.error("Comentarios IG:", e));
     await rescatarPensamientos(env).catch((e) => console.error("Cola IG:", e));
+    // Cada 5 min: los videos recién publicados se ven y se resumen enseguida.
+    if (new Date(evento.scheduledTime).getUTCMinutes() % 5 === 0) await sincronizarVideos(env).catch((e) => console.error("Videos IG:", e));
     if (new Date(evento.scheduledTime).getUTCMinutes() !== 0) return;
     if (new Date(evento.scheduledTime).getUTCHours() === 4) await refrescarTokenIg(env).catch((e) => console.error("Token IG:", e));
-    await sincronizarVideos(env).catch((e) => console.error("Videos IG:", e));
     await sincronizarGithub(env).catch((e) => console.error("GitHub:", e));
     await sincronizarVercel(env).catch((e) => console.error("Vercel:", e));
     const hora = (new Date(evento.scheduledTime).getUTCHours() + 19) % 24; // UTC-5, Ecuador no tiene horario de verano
