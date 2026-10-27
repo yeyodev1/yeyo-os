@@ -188,7 +188,7 @@ async function ordenesInstagram(req: Request, env: Env): Promise<Response> {
 
 // Leads de DMs: la rutina cazadora lee en qué va cada uno y guarda lo que averiguó.
 // Solo toca leads_ig, con la misma llave limitada de los avisos (lee DMs de terceros).
-const CAMPOS_LEAD = ["conversation_id", "estado", "negocio", "presupuesto", "necesidad", "mensajes_bot", "ultimo_envio", "ultimo_visto", "notas", "nombre", "telefono", "email"] as const;
+const CAMPOS_LEAD = ["conversation_id", "estado", "negocio", "negocio_ig", "presupuesto", "necesidad", "mensajes_bot", "ultimo_envio", "ultimo_visto", "notas", "nombre", "telefono", "email"] as const;
 const ESTADOS_LEAD = ["cualificando", "calificado", "no_califica", "diego", "pana", "ruido"];
 
 async function leadsInstagram(req: Request, env: Env): Promise<Response> {
