@@ -50,9 +50,10 @@ async function pensar(p: Pensamiento): Promise<Decision | null> {
   await correrAgente({
     prompt: `${p.tipo === "dm" ? PROMPT_DM : PROMPT_COMENTARIO}\n\n${p.contenido}\n\nLlama la herramienta ${p.tipo === "dm" ? "decidir" : "comentario"} UNA sola vez con tu decisión y termina.`,
     herramientas: [herramienta],
-    web: false,
+    // Si el lead pasa el link de su web, la abre (WebFetch) para decirle qué tiene y qué le falta.
+    web: p.tipo === "dm" && /https?:\/\/|www\.|\.(com|ec|net|org|store|shop|co)\b/i.test(p.contenido),
     effort: "low",
-    maxTurns: 4,
+    maxTurns: 8,
   });
   return decision;
 }
