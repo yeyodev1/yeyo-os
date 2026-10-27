@@ -448,6 +448,7 @@ async function aplicarComentario(env: Env, d: DecisionComentario, datos: { media
     return;
   }
   const hecho: string[] = [d.accion];
+  const lineas = [`💬 **@${usuario ?? "alguien"} comentó tu ${m.media_type === "IMAGE" ? "post" : "reel"}** — "${(c.text ?? "").slice(0, 200)}"`, `🎥 ${m.permalink ?? m.id}`];
   if (d.accion === "responder" && d.publica?.trim()) {
     await ig(env, `/${c.id}/replies`, {
       method: "POST",
@@ -455,15 +456,33 @@ async function aplicarComentario(env: Env, d: DecisionComentario, datos: { media
       body: new URLSearchParams({ message: d.publica.trim() }).toString(),
     });
     hecho.push("publica");
+    lineas.push(`✍️ Público: "${d.publica.trim()}"`);
   }
-  if (d.accion === "responder" && d.dm?.trim() && usuario) {
-    // Si ya está en conversación o en manos de Diego, no se le abre otro DM.
-    const lead = await env.DB.prepare("SELECT estado, mensajes_bot FROM leads_ig WHERE usuario = ?").bind(usuario).first<{ estado: string; mensajes_bot: number }>();
-    if (!lead || (lead.estado === "cualificando" && lead.mensajes_bot === 0)) {
+  if (d.accion === "responder" && usuario) {
+    const lead = await env.DB.prepare(
+      "SELECT ig_id, estado, (SELECT MAX(fecha) FROM mensajes_ig WHERE ig_id = leads_ig.ig_id AND rol = 'lead') AS ultimo FROM leads_ig WHERE usuario = ?",
+    )
+      .bind(usuario)
+      .first<{ ig_id: string | null; estado: string; ultimo: string | null }>();
+    const abierto = lead?.ig_id && lead.ultimo && Date.now() - Date.parse(lead.ultimo) < 23 * 3_600_000;
+    if (lead?.estado === "diego") {
+      lineas.push("🤐 No le escribí por DM: lo atiendes tú");
+    } else if (abierto && lead?.ig_id) {
+      // Ya conversaba con el bot: el comentario entra al hilo y la respuesta sigue esa conversación.
+      const resumen = await resumenVideo(env, m.id);
+      await env.DB.prepare("INSERT INTO mensajes_ig (ig_id, usuario, rol, texto, fecha) VALUES (?, ?, 'lead', ?, ?)")
+        .bind(lead.ig_id, usuario, `[comentó tu video "${(m.caption ?? "").slice(0, 150)}"${resumen ? ` (de qué va: ${resumen.slice(0, 300)})` : ""}]: ${c.text ?? ""}`, ahora())
+        .run();
+      await atenderLead(env, lead.ig_id);
+      hecho.push("dm-hilo");
+      lineas.push("📩 Le sigo la conversación por DM");
+    } else if (d.dm?.trim()) {
+      // Respuesta privada al comentario: abre el DM aunque nunca nos haya escrito (hasta 7 días).
       const { mid, igId } = await enviarDm(env, { comment_id: c.id }, d.dm.trim());
       await env.DB.prepare(
         `INSERT INTO leads_ig (usuario, ig_id, estado, mensajes_bot, ultimo_envio, notas, creado, actualizado) VALUES (?, ?, 'cualificando', 1, ?, ?, ?, ?)
          ON CONFLICT (usuario) DO UPDATE SET ig_id = COALESCE(excluded.ig_id, leads_ig.ig_id), mensajes_bot = leads_ig.mensajes_bot + 1,
+           estado = CASE WHEN leads_ig.estado IN ('ruido', 'no_califica', 'pana') THEN 'cualificando' ELSE leads_ig.estado END,
            ultimo_envio = excluded.ultimo_envio, actualizado = excluded.actualizado`,
       )
         .bind(usuario, igId, d.dm.trim(), `llegó por un comentario en ${m.permalink ?? m.id}`, ahora(), ahora())
@@ -472,10 +491,12 @@ async function aplicarComentario(env: Env, d: DecisionComentario, datos: { media
         .bind(igId, usuario, d.dm.trim(), mid, ahora())
         .run();
       hecho.push("dm");
+      lineas.push(`📩 DM: "${d.dm.trim()}"`);
     }
   }
   await env.DB.prepare("UPDATE comentarios_ig SET accion = ? WHERE id = ?").bind(hecho.join("+"), c.id).run();
-  if (d.aviso?.trim()) await avisarInstagram(env, d.aviso.trim());
+  // El aviso dice lo que de verdad pasó; lo de Claude va abajo como nota extra.
+  if (d.accion === "responder") await avisarInstagram(env, [lineas.join("\n"), d.aviso?.trim()].filter(Boolean).join("\n\n"));
 }
 
 // --- Cola de pensamientos: Claude piensa en GitHub Actions con la suscripción de Diego ---
