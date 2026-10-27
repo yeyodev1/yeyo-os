@@ -3,8 +3,9 @@
 import { execFileSync } from "node:child_process";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { PROMPT_COMENTARIO, PROMPT_DM } from "../../worker/prompts.ts";
+import { PROMPT_COMENTARIO, PROMPT_DM, PROYECTOS_DIEGO } from "../../worker/prompts.ts";
 import { correrAgente, ok, sinApertura } from "../comun/agente.ts";
+import { catalogoDesdeGithub } from "./catalogo.ts";
 import { verWeb } from "./web.ts";
 
 type Pensamiento = { id: number; tipo: "dm" | "comentario"; contenido: string };
@@ -52,6 +53,11 @@ const herramientaWeb = tool(
   },
 );
 
+// Los ejemplos se leen del portafolio en GitHub al arrancar; si GitHub falla, queda la lista fija.
+const catalogo = await catalogoDesdeGithub();
+console.log(catalogo ? "Catálogo de páginas leído desde GitHub." : "No pude leer el portafolio de GitHub: uso la lista fija.");
+const conCatalogo = (prompt: string) => (catalogo ? prompt.replace(PROYECTOS_DIEGO, catalogo) : prompt);
+
 async function pensar(p: Pensamiento): Promise<Decision | null> {
   let decision: Decision | null = null;
   const guardar = async (d: Decision) => {
@@ -63,7 +69,7 @@ async function pensar(p: Pensamiento): Promise<Decision | null> {
       ? tool("decidir", "Lo que haces con este DM: el estado del lead, los datos que ya se saben, el DM exacto a enviar y el aviso para Diego.", ESQUEMA_DM, guardar)
       : tool("comentario", "Cómo responder este comentario según la publicación.", ESQUEMA_COMENTARIO, guardar);
   await correrAgente({
-    prompt: `${p.tipo === "dm" ? PROMPT_DM : PROMPT_COMENTARIO}\n\n${p.contenido}\n\nLlama la herramienta ${p.tipo === "dm" ? "decidir" : "comentario"} UNA sola vez con tu decisión y termina.`,
+    prompt: `${conCatalogo(p.tipo === "dm" ? PROMPT_DM : PROMPT_COMENTARIO)}\n\n${p.contenido}\n\nLlama la herramienta ${p.tipo === "dm" ? "decidir" : "comentario"} UNA sola vez con tu decisión y termina.`,
     // Si el lead pasa el link de su web, la abre (ver_web) para decirle qué tiene y qué le falta.
     herramientas: p.tipo === "dm" && /https?:\/\/|www\.|\.(com|ec|net|org|store|shop|co)\b/i.test(p.contenido) ? [herramienta, herramientaWeb] : [herramienta],
     web: false,
