@@ -35,9 +35,13 @@ const ESQUEMA_COMENTARIO = {
   aviso: nulo.describe("texto para Diego por Telegram; null = no avisar"),
 };
 
-// Diego no usa ¿ ni ¡: se quitan de lo que sale publicado aunque el modelo los ponga.
+// Diego no usa ¿ ni ¡ ni punto final: se quitan de lo que sale publicado aunque el modelo los
+// ponga ("..." se respeta).
+const sinPuntoFinal = (t: string) => t.split("\n").map((l) => l.replace(/(?<!\.)\.\s*$/, "").trimEnd()).join("\n");
 const limpiar = (d: Decision): Decision =>
-  Object.fromEntries(Object.entries(d).map(([k, v]) => [k, typeof v === "string" && ["respuesta", "publica", "dm"].includes(k) ? sinApertura(v) : v]));
+  Object.fromEntries(
+    Object.entries(d).map(([k, v]) => [k, typeof v === "string" && ["respuesta", "publica", "dm"].includes(k) ? sinPuntoFinal(sinApertura(v)) : v]),
+  );
 
 // Para la web o tienda que comparta un lead: Chrome de verdad, así también se leen las hechas con JavaScript.
 const herramientaWeb = tool(
