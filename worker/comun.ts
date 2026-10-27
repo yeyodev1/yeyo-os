@@ -88,7 +88,7 @@ export async function leadAGhl(l: Lead, env: Env): Promise<string | null> {
   const notas = [
     "🧾 Lead DMs Instagram @yeyo.dev",
     "📝 Entra a GHL por la misma vía que la landing web.bakano.ec, pero NO llenó la landing: lo cualificó el bot en los DMs de @yeyo.dev. No se reportó a Meta CAPI.",
-    `📊 Estado: ${{ calificado: "✅ Calificado ($400+)", cualificando: "⏳ Todavía cualificando", no_califica: "🚫 No calificó (presupuesto bajo)", diego: "🌱 Lo atiende Diego" }[l.estado] ?? l.estado}`,
+    `📊 Estado: ${{ calificado: "✅ Calificado ($500+)", cualificando: "⏳ Todavía cualificando", no_califica: "🚫 No calificó (presupuesto bajo)", diego: "🌱 Lo atiende Diego" }[l.estado] ?? l.estado}`,
     `📸 Instagram: @${l.usuario} (https://instagram.com/${l.usuario})`,
     `🏪 Negocio: ${l.negocio ?? "—"}`,
     `🏷️ Instagram del negocio: ${l.negocio_ig ?? "—"}`,
