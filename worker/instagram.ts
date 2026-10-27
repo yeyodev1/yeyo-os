@@ -11,7 +11,7 @@ const TEXTOS_AUTOMATICOS = ["¡Buenas! 🎉 Vi tu comentario", "¡Qué más! �
 // pasan otra vez por Claude: si vuelven con interés de negocio, la conversación sigue.
 const NO_SE_LE_ESCRIBE = ["diego"];
 
-type LeadIg = Lead & { ig_id: string | null; mensajes_bot: number; ultimo_envio: string | null; notas: string | null };
+type LeadIg = Lead & { ig_id: string | null; mensajes_bot: number; ultimo_envio: string | null; ultimo_visto: string | null; notas: string | null };
 type Perfil = { username?: string; name?: string; follower_count?: number; is_user_follow_business?: boolean };
 type Evento = {
   sender: { id: string };
@@ -88,6 +88,27 @@ async function miCuenta(env: Env): Promise<{ id: string; username: string }> {
   await guardarConfig(env, "ig_user_id", String(yo.user_id));
   await guardarConfig(env, "ig_username", yo.username);
   return { id: String(yo.user_id), username: yo.username };
+}
+
+// Encabezado del aviso de cada DM: quién escribió, qué dijo (lo nuevo desde la última vez) y qué
+// se le contestó. Diego se entera de todo sin abrir Instagram.
+const ICONO_ESTADO: Record<string, string> = { cualificando: "⏳", calificado: "🔥", no_califica: "🚫", pana: "👋", diego: "🙋🏽" };
+
+async function resumenDm(env: Env, lead: LeadIg, igId: string, enviado: string | null, estado: string): Promise<string> {
+  const { results } = await env.DB.prepare(
+    "SELECT texto FROM mensajes_ig WHERE ig_id = ? AND rol = 'lead' AND fecha > ? ORDER BY id DESC LIMIT 3",
+  )
+    .bind(igId, lead.ultimo_visto ?? "")
+    .all<{ texto: string }>();
+  const dijo = results.reverse().map((r) => r.texto.slice(0, 200)).join(" / ") || "(sin texto)";
+  const respuesta = enviado
+    ? `✍️ Le contesté: "${enviado}"`
+    : estado === "pana"
+      ? "🤐 No le contesté: es un pana, te toca a ti"
+      : estado === "diego"
+        ? "🤐 No le contesté: lo atiendes tú"
+        : "🤐 No le contesté";
+  return `📩 **@${lead.usuario} te escribió** ${ICONO_ESTADO[estado] ?? ""}\n🗨️ "${dijo}"\n${respuesta}`;
 }
 
 // Si Instagram rechaza la acción no pasa nada: es solo un detalle visual.
@@ -200,7 +221,12 @@ async function atenderLead(env: Env, igId: string): Promise<void> {
 // Arma lo que Claude necesita saber del lead y lo deja en cola. Devuelve false si no hay nada que pensar.
 async function encolarDm(env: Env, igId: string): Promise<boolean> {
   const lead = await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>();
-  if (!lead || NO_SE_LE_ESCRIBE.includes(lead.estado)) return false;
+  if (!lead) return false;
+  if (NO_SE_LE_ESCRIBE.includes(lead.estado)) {
+    await avisarInstagram(env, await resumenDm(env, lead, igId, null, lead.estado));
+    await env.DB.prepare("UPDATE leads_ig SET ultimo_visto = ? WHERE ig_id = ?").bind(ahora(), igId).run();
+    return false;
+  }
   if (lead.estado === "calificado" && lead.telefono) return false; // ya lo tiene Diego
   // "Visto" y "escribiendo…" mientras Claude piensa, solo a quien seguramente se le va a contestar.
   if (!["pana", "ruido"].includes(lead.estado)) {
@@ -262,7 +288,7 @@ async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLea
     )
     .run();
 
-  let aviso = d.aviso?.trim() ?? "";
+  let aviso = d.estado === "ruido" ? "" : [await resumenDm(env, lead, igId, enviado, d.estado), d.aviso?.trim()].filter(Boolean).join("\n\n");
   const actualizado = await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>();
   if (actualizado) {
     const ghl = await leadAGhl(actualizado, env);
@@ -531,4 +557,28 @@ export async function rescatarPensamientos(env: Env): Promise<void> {
   if (!atascado) return;
   await env.DB.prepare("DELETE FROM config WHERE clave = 'ig_pensador_latido'").run();
   await dispararPensador(env);
+}
+
+// Pana manda por aquí el texto exacto que Diego aprobó en Telegram. Cuenta como mensaje de Diego:
+// el bot se hace a un lado con ese lead.
+export async function enviarDesdePana(req: Request, env: Env): Promise<Response> {
+  const auth = req.headers.get("Authorization") ?? "";
+  if (!env.AGENTES_SECRET || !igualSeguro(auth, `Bearer ${env.AGENTES_SECRET}`)) return new Response("no", { status: 401 });
+  if (req.method !== "POST") return new Response("no", { status: 405 });
+  const { usuario = "", texto = "" } = (await req.json()) as { usuario?: string; texto?: string };
+  const user = usuario.replace(/^@/, "").trim();
+  if (!user || !texto.trim()) return Response.json({ error: "Falta usuario o texto" }, { status: 400 });
+  const lead = await env.DB.prepare("SELECT ig_id FROM leads_ig WHERE usuario = ? AND ig_id IS NOT NULL").bind(user).first<{ ig_id: string }>();
+  if (!lead) return Response.json({ error: `No tengo el chat de @${user}: solo puedo responder a quien escribió desde que el bot está prendido.` }, { status: 404 });
+  try {
+    const { mid } = await enviarDm(env, { id: lead.ig_id }, texto.trim());
+    await env.DB.prepare("INSERT OR IGNORE INTO mensajes_ig (ig_id, usuario, rol, texto, mid, fecha) VALUES (?, ?, 'diego', ?, ?, ?)")
+      .bind(lead.ig_id, user, texto.trim(), mid, ahora())
+      .run();
+    await env.DB.prepare("UPDATE leads_ig SET estado = 'diego', actualizado = ? WHERE ig_id = ?").bind(ahora(), lead.ig_id).run();
+    return Response.json({ ok: true });
+  } catch (e) {
+    // El error típico: pasaron más de 24 h desde su último mensaje y Instagram ya no deja escribirle.
+    return Response.json({ error: String(e).slice(0, 300) }, { status: 502 });
+  }
 }

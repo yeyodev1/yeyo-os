@@ -239,16 +239,19 @@ const verDms = tool(
 
 const responderDm = tool(
   "responder_dm_instagram",
-  `Responde un DM de Instagram (hilo existente) vía Buzzfy. SOLO con el texto EXACTO que Diego dictó o ya aprobó en este chat: si pidió "respóndele algo" sin dar el texto, primero muéstrale el borrador y espera su ok, sin llamar esta herramienta. La confirmación del envío le llega por Telegram en 1 a 2 minutos.`,
+  `Responde un DM de Instagram al instante desde la cuenta de Diego (lo envía el Worker con la API de Instagram). SOLO con el texto EXACTO que Diego dictó o ya aprobó en este chat: si pidió "respóndele algo" sin dar el texto, primero muéstrale el borrador y espera su ok, sin llamar esta herramienta. Solo funciona con personas que escribieron en las últimas 24 h; después de enviarlo, el bot automático deja de escribirle a esa persona (la atiende Diego).`,
   {
     usuario: z.string().describe("username de Instagram del destinatario, sin @"),
     texto: z.string().describe("el mensaje exacto que Diego aprobó, tal cual, sin retoques"),
   },
   async ({ usuario, texto }) => {
-    const fallo = await ordenIg("dm", { usuario: usuario.replace(/^@/, ""), texto });
-    // Si Diego ya le escribe él, el bot cualificador se hace a un lado con ese lead.
-    if (!fallo) await marcar(usuario.replace(/^@/, ""), "diego");
-    return fallo ? error(fallo) : ok(`Encolado: Buzzfy le envía ese texto exacto a @${usuario.replace(/^@/, "")} y confirma por Telegram en 1 a 2 minutos 📸.`);
+    const res = await fetch(`${process.env.AGENTES_URL}/api/instagram/enviar`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.AGENTES_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ usuario, texto }),
+    });
+    const r = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    return r.ok ? ok(`Enviado a @${usuario.replace(/^@/, "")} ✅`) : error(r.error ?? `El Worker respondió ${res.status}`);
   },
 );
 
@@ -323,8 +326,8 @@ Cómo trabajar:
 - Si pregunta por resultados, consulta la memoria y responde con números reales.
 - Si pregunta por su código, repos, commits o deploys, usa consultar_github y consultar_vercel en vivo (a él sí le das los nombres reales de los proyectos). Si de ahí sale algo bueno para contar, ofrécele guardarlo como material.
 - Si pregunta por Instagram, sus reels, los trial reels o Buzzfy (📸), consulta fuentes con origen = 'instagram' (reportes que deja la rutina de Buzzfy, el más reciente primero) y respóndele con esos números. Si no hay reportes recientes, o si pide datos de AHORITA / en vivo / actualizados, usa consultar_instagram_vivo y avísale que el reporte fresco le llega en 1 a 2 minutos como mensaje aparte.
-- DMs de Instagram: si quiere ver su inbox o sus leads en vivo, ver_dms_instagram. Para responder un DM, responder_dm_instagram SOLO con el texto exacto que él dictó o aprobó aquí: si te pide "respóndele tú" o "mándale algo", primero escríbele el borrador en el chat y espera su ok antes de llamar la herramienta. Las respuestas de Buzzfy le llegan como mensaje aparte 📸, avísaselo.
-- Si Diego dice "mándalo" / "envíala" / "dale" refiriéndose a una respuesta sugerida de una alerta de lead (🔥/🌱/👋), búscala en fuentes origen='instagram' (la alerta más reciente de ese @usuario; si no nombró a nadie, la última alerta con respuesta sugerida), cita en tu respuesta a quién y qué texto vas a mandar, y pásalo TAL CUAL a responder_dm_instagram (eso deja a ese lead en estado 'diego': el bot ya no le escribe). Su regla de negocio: lead calificado = negocio real + presupuesto de $400 o más + necesita tienda online, pasarela de pago o automatizaciones.
+- DMs de Instagram: si quiere ver su inbox o sus leads en vivo, ver_dms_instagram. Para responder un DM, responder_dm_instagram SOLO con el texto exacto que él dictó o aprobó aquí: si te pide "respóndele tú" o "mándale algo", primero escríbele el borrador en el chat y espera su ok antes de llamar la herramienta. El envío es inmediato: confírmale con ✅ o dile el error tal cual (si pasaron más de 24 h desde su último mensaje, Instagram ya no deja responder).
+- Si Diego dice "mándalo" / "envíala" / "dale" refiriéndose a una respuesta sugerida de una alerta de lead (🔥/🌱/👋), búscala en fuentes origen='instagram' (la alerta más reciente de ese @usuario; si no nombró a nadie, la última alerta con respuesta sugerida), cita en tu respuesta a quién y qué texto vas a mandar, y pásalo TAL CUAL a responder_dm_instagram (se envía al instante y deja a ese lead en estado 'diego': el bot ya no le escribe). Su regla de negocio: lead calificado = negocio real + presupuesto de $400 o más + necesita tienda online, pasarela de pago o automatizaciones.
 - La rutina cazadora cualifica sola los DMs nuevos (pregunta qué negocio es, qué necesita y el presupuesto, un mensaje corto a la vez), le pasa a Diego los de $400+ y cierra amable a los de menos. Si pregunta por sus leads, consulta leads_ig. Si dice que uno lo atiende él o que el bot no le escriba, marcar_lead con 'diego'.
 - Si pide un borrador, una idea o "cómo lo dirías", escríbelo siguiendo <voz> y <aprendizajes> de esa red y NO lo publiques: muéstraselo y espera a que diga "publícalo" (o pida cambios). Puedes buscar en la web si el tema lo necesita.
 - Publicar o borrar es inmediato y público: hazlo solo si lo pidió claramente. Si adjuntó una foto (tg:...) y pide tuitear con ella, pásala como imagen.

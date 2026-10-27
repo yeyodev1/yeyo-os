@@ -3,7 +3,7 @@
 // El Agent SDK no corre aquí (necesita lanzar un proceso); el motor de Instagram, que tiene que
 // contestar al instante, llama a Claude directo por la Messages API.
 import { type Env, type Lead, avisarInstagram, config, escapar, guardarConfig, igualSeguro, leadAGhl, responder, telefonoE164, telegram } from "./comun";
-import { pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, rescatarPensamientos, revisarComentarios, verificarFirmaMeta } from "./instagram";
+import { enviarDesdePana, pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, rescatarPensamientos, revisarComentarios, verificarFirmaMeta } from "./instagram";
 
 type Mensaje = {
   message_id: number;
@@ -35,6 +35,7 @@ export default {
     if (url.pathname === "/api/instagram/ordenes") return ordenesInstagram(req, env);
     if (url.pathname === "/api/instagram/leads") return leadsInstagram(req, env);
     if (url.pathname === "/api/instagram/pensamientos") return pensamientosInstagram(req, env);
+    if (url.pathname === "/api/instagram/enviar") return enviarDesdePana(req, env);
     // Webhook de la app de Meta: DMs (y comentarios cuando Meta dé Advanced Access) al instante.
     if (url.pathname === "/instagram") {
       if (req.method === "GET") {
