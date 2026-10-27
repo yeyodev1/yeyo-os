@@ -1,5 +1,6 @@
 // Piensa las respuestas de Instagram con la suscripción de Diego (Agent SDK). El Worker encola cada
 // DM o comentario y dispara este workflow; aquí Claude decide y el Worker aplica la decisión.
+import { execFileSync } from "node:child_process";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { PROMPT_COMENTARIO, PROMPT_DM } from "../../worker/prompts.ts";
@@ -69,6 +70,21 @@ const inicio = Date.now();
 let ultimoTrabajo = Date.now();
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Un run que se queda escuchando no ve los cambios que se suban después: si main avanzó, se apaga
+// para que el próximo mensaje arranque uno nuevo con las instrucciones al día.
+let ultimaRevision = Date.now();
+function hayVersionNueva(): boolean {
+  const actual = process.env.GITHUB_SHA;
+  if (!actual || Date.now() - ultimaRevision < 60_000) return false;
+  ultimaRevision = Date.now();
+  try {
+    const remoto = execFileSync("git", ["ls-remote", "origin", "refs/heads/main"], { encoding: "utf8", timeout: 10_000 }).split("\t")[0];
+    return !!remoto && remoto !== actual;
+  } catch {
+    return false;
+  }
+}
+
 async function pedirCola(): Promise<Pensamiento[]> {
   const res = await fetch(URL_COLA, { headers: CABECERAS });
   if (!res.ok) throw new Error(`El Worker respondió ${res.status} al pedir la cola`);
@@ -90,6 +106,10 @@ async function atender(pensamientos: Pensamiento[]): Promise<void> {
 }
 
 while (Date.now() - ultimoTrabajo < INACTIVO_MAX && Date.now() - inicio < VIDA_MAX) {
+  if (hayVersionNueva()) {
+    console.log("Hay una versión nueva en main: me apago para que arranque otro run con ella.");
+    break;
+  }
   const pensamientos = await pedirCola().catch((e) => {
     console.error(e);
     return [];
@@ -98,9 +118,7 @@ while (Date.now() - ultimoTrabajo < INACTIVO_MAX && Date.now() - inicio < VIDA_M
   else await dormir(1500);
 }
 
-// Antes de irse avisa al Worker (vuelve a disparar el workflow con lo próximo) y revisa una
-// última vez por si algo entró justo en ese momento.
+// Antes de irse avisa al Worker: lo que llegue desde ahora vuelve a disparar el workflow (que
+// arranca con lo último de main y recoge lo que haya quedado en la cola).
 await fetch(URL_COLA, { method: "POST", headers: CABECERAS, body: JSON.stringify({ adios: true }) });
-const ultimos = await pedirCola();
-if (ultimos.length) await atender(ultimos);
-console.log("Me apago: 20 min sin mensajes.");
+console.log("Me apago.");
