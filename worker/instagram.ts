@@ -194,6 +194,8 @@ async function manejarDm(env: Env, ev: Evento): Promise<void> {
 
   const { lead } = await leadDe(env, igId);
   await env.DB.prepare("UPDATE mensajes_ig SET usuario = ? WHERE id = ?").bind(lead.usuario, miId).run();
+  // Volvió a escribir: si después se vuelve a quedar callado, merece otro seguimiento.
+  await env.DB.prepare("UPDATE leads_ig SET seguimientos = 0 WHERE ig_id = ?").bind(igId).run();
   if (await pausado(env)) return;
 
   // La gente manda varios mensajes seguidos: se espera un poco y se atiende solo el último.
@@ -235,10 +237,10 @@ async function tomarCandado(env: Env, igId: string): Promise<boolean> {
 
 const soltarCandado = (env: Env, igId: string) => env.DB.prepare("UPDATE leads_ig SET procesando = NULL WHERE ig_id = ?").bind(igId).run();
 
-async function atenderLead(env: Env, igId: string): Promise<void> {
+async function atenderLead(env: Env, igId: string, seguimiento = false): Promise<void> {
   if (!(await tomarCandado(env, igId))) return;
   try {
-    const encolado = await encolarDm(env, igId);
+    const encolado = await encolarDm(env, igId, seguimiento);
     if (!encolado) await soltarCandado(env, igId);
   } catch (e) {
     await soltarCandado(env, igId);
@@ -247,7 +249,7 @@ async function atenderLead(env: Env, igId: string): Promise<void> {
 }
 
 // Arma lo que Claude necesita saber del lead y lo deja en cola. Devuelve false si no hay nada que pensar.
-async function encolarDm(env: Env, igId: string): Promise<boolean> {
+async function encolarDm(env: Env, igId: string, seguimiento = false): Promise<boolean> {
   const lead = await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>();
   if (!lead) return false;
   if (NO_SE_LE_ESCRIBE.includes(lead.estado)) {
@@ -274,12 +276,15 @@ async function encolarDm(env: Env, igId: string): Promise<boolean> {
     .map((r) => `[${r.fecha.slice(0, 16)}] ${quien[r.rol] ?? r.rol}: ${r.texto}`)
     .join("\n");
   const { procesando: _, ...guardado } = lead as LeadIg & { procesando?: unknown };
-  const contenido = `<lead>\n${JSON.stringify(guardado)}\n</lead>\n<perfil>\n${JSON.stringify(perfil)}\n</perfil>\n${previos ? `<historial_en_instagram>\n${previos}\n</historial_en_instagram>\n` : ""}<conversacion>\n${conversacion}\n</conversacion>`;
-  await encolar(env, "dm", igId, contenido, { ultimoLead });
+  const nota = seguimiento
+    ? "\n<seguimiento>\nNo ha respondido tu último mensaje desde hace unas horas. Mándale UN mensaje corto y natural para retomar la conversación desde donde quedó (sin presionar, sin repetir la misma pregunta tal cual). Si la conversación ya estaba cerrada o no tiene sentido escribirle, respuesta null.\n</seguimiento>"
+    : "";
+  const contenido = `<lead>\n${JSON.stringify(guardado)}\n</lead>\n<perfil>\n${JSON.stringify(perfil)}\n</perfil>\n${previos ? `<historial_en_instagram>\n${previos}\n</historial_en_instagram>\n` : ""}<conversacion>\n${conversacion}\n</conversacion>${nota}`;
+  await encolar(env, "dm", igId, contenido, { ultimoLead, seguimiento });
   return true;
 }
 
-async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLead?: number }): Promise<void> {
+async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLead?: number; seguimiento?: boolean }): Promise<void> {
   const lead = await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>();
   if (!lead) return;
   // Si mientras pensaba Diego tomó el chat, no se manda nada.
@@ -297,7 +302,7 @@ async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLea
   await env.DB.prepare(
     `UPDATE leads_ig SET estado = CASE WHEN estado = 'diego' THEN 'diego' ELSE ? END, negocio = COALESCE(?, negocio), negocio_ig = COALESCE(?, negocio_ig), necesidad = COALESCE(?, necesidad),
        presupuesto = COALESCE(?, presupuesto), nombre = COALESCE(?, nombre), telefono = COALESCE(?, telefono), email = COALESCE(?, email),
-       mensajes_bot = mensajes_bot + ?, ultimo_envio = COALESCE(?, ultimo_envio), ultimo_visto = ?, actualizado = ? WHERE ig_id = ?`,
+       mensajes_bot = mensajes_bot + ?, seguimientos = seguimientos + ?, ultimo_envio = COALESCE(?, ultimo_envio), ultimo_visto = ?, actualizado = ? WHERE ig_id = ?`,
   )
     .bind(
       d.estado,
@@ -309,6 +314,7 @@ async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLea
       d.telefono ? telefonoE164(d.telefono) || null : null,
       d.email,
       enviado ? 1 : 0,
+      datos.seguimiento ? 1 : 0,
       enviado,
       ultimo?.fecha ?? ahora(),
       ahora(),
@@ -316,7 +322,10 @@ async function aplicarDm(env: Env, igId: string, d: Decision, datos: { ultimoLea
     )
     .run();
 
-  let aviso = d.estado === "ruido" ? "" : [await resumenDm(env, lead, igId, enviado, d.estado), d.aviso?.trim()].filter(Boolean).join("\n\n");
+  const encabezado = datos.seguimiento
+    ? enviado ? `🔁 **Le hice seguimiento a @${lead.usuario}** (no respondía)\n✍️ "${enviado}"` : ""
+    : await resumenDm(env, lead, igId, enviado, d.estado);
+  let aviso = d.estado === "ruido" ? "" : [encabezado, d.aviso?.trim()].filter(Boolean).join("\n\n");
   const actualizado = await env.DB.prepare("SELECT * FROM leads_ig WHERE ig_id = ?").bind(igId).first<LeadIg>();
   if (actualizado) {
     const ghl = await leadAGhl(actualizado, env);
@@ -595,6 +604,26 @@ async function rescatarSinResponder(env: Env): Promise<void> {
     .bind(new Date(Date.now() - 5 * 60_000).toISOString(), new Date(Date.now() - 24 * 3_600_000).toISOString(), new Date(Date.now() - 30_000).toISOString())
     .all<{ ig_id: string }>();
   for (const r of results) await atenderLead(env, r.ig_id);
+}
+
+// Cada 5 min: leads que dejaron de responder. Se les escribe UNA vez, entre 5 y 20 h después del
+// último mensaje del bot, y solo si su último mensaje fue hace menos de 22 h (Instagram no deja
+// escribir pasadas las 24 h).
+export async function hacerSeguimientos(env: Env): Promise<void> {
+  if (await pausado(env)) return;
+  const hace = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  const { results } = await env.DB.prepare(
+    `SELECT l.ig_id FROM leads_ig l
+     WHERE l.ig_id IS NOT NULL AND l.seguimientos = 0 AND l.procesando IS NULL
+       AND (l.estado = 'cualificando' OR (l.estado = 'calificado' AND l.telefono IS NULL))
+       AND (SELECT rol FROM mensajes_ig m WHERE m.ig_id = l.ig_id ORDER BY m.id DESC LIMIT 1) = 'bot'
+       AND (SELECT MAX(fecha) FROM mensajes_ig m WHERE m.ig_id = l.ig_id AND m.rol = 'bot') BETWEEN ? AND ?
+       AND (SELECT MAX(fecha) FROM mensajes_ig m WHERE m.ig_id = l.ig_id AND m.rol = 'lead') > ?
+     LIMIT 3`,
+  )
+    .bind(hace(20), hace(5), hace(22))
+    .all<{ ig_id: string }>();
+  for (const r of results) await atenderLead(env, r.ig_id, true);
 }
 
 // Cada minuto: si algo lleva más de 45 s en cola sin que nadie lo tome, se vuelve a disparar

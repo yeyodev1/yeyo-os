@@ -3,7 +3,7 @@
 // El Agent SDK no corre aquí (necesita lanzar un proceso); el motor de Instagram, que tiene que
 // contestar al instante, llama a Claude directo por la Messages API.
 import { type Env, type Lead, avisarInstagram, config, escapar, guardarConfig, igualSeguro, leadAGhl, responder, telefonoE164, telegram } from "./comun";
-import { enviarDesdePana, pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, rescatarPensamientos, revisarComentarios, sincronizarVideos, verificarFirmaMeta, videosInstagram } from "./instagram";
+import { enviarDesdePana, pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, hacerSeguimientos, rescatarPensamientos, revisarComentarios, sincronizarVideos, verificarFirmaMeta, videosInstagram } from "./instagram";
 
 type Mensaje = {
   message_id: number;
@@ -77,7 +77,10 @@ export default {
     await revisarComentarios(env).catch((e) => console.error("Comentarios IG:", e));
     await rescatarPensamientos(env).catch((e) => console.error("Cola IG:", e));
     // Cada 5 min: los videos recién publicados se ven y se resumen enseguida.
-    if (new Date(evento.scheduledTime).getUTCMinutes() % 5 === 0) await sincronizarVideos(env).catch((e) => console.error("Videos IG:", e));
+    if (new Date(evento.scheduledTime).getUTCMinutes() % 5 === 0) {
+      await sincronizarVideos(env).catch((e) => console.error("Videos IG:", e));
+      await hacerSeguimientos(env).catch((e) => console.error("Seguimientos IG:", e));
+    }
     if (new Date(evento.scheduledTime).getUTCMinutes() !== 0) return;
     if (new Date(evento.scheduledTime).getUTCHours() === 4) await refrescarTokenIg(env).catch((e) => console.error("Token IG:", e));
     await sincronizarGithub(env).catch((e) => console.error("GitHub:", e));
