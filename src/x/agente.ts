@@ -141,7 +141,7 @@ ${(await catalogoDesdeGithub()) ?? "(no se pudo leer; todo está en yeyo.dev)"}
 </portafolio>
 
 Cómo hacerlo:
-1. Mira <posts_recientes_x> y sus métricas: qué tipo de tweet funcionó y qué no. Revisa <lo_que_diego_programa>, <lo_que_diego_lee> y <material_reciente> para ver qué hay nuevo. Lo que programó hoy es oro para build in public ("ahorita estoy…", "hoy saqué…").
+1. Mira <posts_recientes_x> y sus métricas: qué tipo de tweet funcionó y qué no. Revisa <noticias>, <lo_que_diego_programa>, <lo_que_diego_lee> y <material_reciente> para ver qué hay nuevo. Cada día, al menos uno de los hilos debe tomar una noticia de <noticias> y decir con opinión cómo pega en los negocios de Ecuador y qué haría Diego (si hoy todavía no salió uno así, prioriza ese). Lo que programó hoy es oro para build in public ("ahorita estoy…", "hoy saqué…").
 2. Decide si vale la pena publicar ahora. Si no hay nada bueno, usa no_publicar.
 3. Si publicas, escribe un HILO de 4 a 7 tuits para dueños de negocio, siguiendo <voz> y <aprendizajes>: gancho con opinión → un punto por tuit con un ejemplo real → cierre con la lección. Lo técnico de <lo_que_diego_programa> se traduce a qué gana el negocio (ventas, tiempo, plata), nunca en jerga de dev. Elige un tema y un gancho distintos a los de los últimos posts. Solo hechos reales de las fuentes: no inventes cifras, clientes ni anécdotas. Los proyectos de <portafolio> son públicos y se pueden nombrar; otros clientes de Bakano, nunca. Un tuit suelto solo si es una opinión corta y filosa (máx. uno al día).
 4. Imágenes, siempre: el primer tuit lleva una imagen, y si suma, otra en el tuit clave.

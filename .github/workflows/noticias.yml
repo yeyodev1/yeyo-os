@@ -1,0 +1,33 @@
+name: Noticias
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: noticias
+  cancel-in-progress: false
+
+jobs:
+  noticias:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AGENTES_URL: ${{ vars.AGENTES_URL }}
+      AGENTES_SECRET: ${{ secrets.AGENTES_SECRET }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # node_modules guardado entre ejecuciones: evita ~8 s de npm ci en cada disparo.
+      - id: modulos
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: modulos-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.modulos.outputs.cache-hit != 'true'
+        run: npm ci
+      - run: npm run noticias

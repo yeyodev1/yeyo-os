@@ -27,7 +27,7 @@ const consultar = tool(
   "consultar_memoria",
   `Consulta SQL de solo lectura (SQLite/D1) sobre la memoria. Tablas:
 posts(red, externo_id, fecha, texto, gancho, estructura, tema, origen, metricas JSON, borrado)
-fuentes(fecha, origen 'telegram'|'telegram_foto'|'x_bookmark'|'x_like'|'x_radar'|'github'|'instagram', autor, url, texto, metricas) — en github, autor = repo; si Diego pregunta qué programó, nunca le ocultes nada a él; en instagram, texto = reporte de Buzzfy sobre su cuenta @yeyo.dev (crecimiento, trial reels, qué se publicó)
+fuentes(fecha, origen 'telegram'|'telegram_foto'|'x_bookmark'|'x_like'|'x_radar'|'github'|'instagram'|'noticias', autor, url, texto, metricas) — en github, autor = repo; si Diego pregunta qué programó, nunca le ocultes nada a él; en noticias, texto = titular + resumen + cómo afecta a Ecuador + postura sugerida (autor = medio, url = la nota; las busca cada mañana el agente de noticias); en instagram, texto = reporte de Buzzfy sobre su cuenta @yeyo.dev (crecimiento, trial reels, qué se publicó)
 recordatorios(id, texto, cuando ISO UTC, repetir, estado 'pendiente'|'enviado'|'cancelado')
 material(fecha, texto) · aprendizajes(fecha, red, texto, origen, activo) · config(clave, valor)
 ordenes_ig(fecha, tipo 'dm'|'inbox', datos JSON, estado 'pendiente'|'hecha'|'fallida', resultado) — órdenes de Instagram que encolaste; si Diego pregunta si ya salió su DM, mira estado y resultado

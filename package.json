@@ -10,6 +10,8 @@
     "chat": "tsx --env-file-if-exists=.env src/chat/agente.ts",
     "instagram": "tsx --env-file-if-exists=.env src/instagram/agente.ts",
     "videos": "tsx --env-file-if-exists=.env src/instagram/videos.ts",
+    "noticias": "tsx --env-file-if-exists=.env src/noticias/agente.ts",
+    "prueba:noticias": "DRY_RUN=1 tsx --env-file-if-exists=.env src/noticias/agente.ts",
     "prueba:linkedin": "DRY_RUN=1 tsx --env-file-if-exists=.env src/linkedin/agente.ts",
     "prueba:x": "DRY_RUN=1 tsx --env-file-if-exists=.env src/x/agente.ts",
     "token:linkedin": "tsx --env-file-if-exists=.env scripts/token-linkedin.ts",

@@ -27,7 +27,7 @@ export async function contexto(red: Red, { propios = 15, ajenos = 5 } = {}): Pro
   const otra: Red = red === "x" ? "linkedin" : "x";
   const hace4dias = new Date(Date.now() - 4 * 86_400_000).toISOString();
   const hace3dias = new Date(Date.now() - 3 * 86_400_000).toISOString();
-  const [voz, vozRed, materialFijo, material, aprendizajes, mios, otros, fuentes, github, mencionables] = await Promise.all([
+  const [voz, vozRed, materialFijo, material, aprendizajes, mios, otros, fuentes, github, mencionables, noticias] = await Promise.all([
     readFile("contenido/voz.md", "utf8"),
     readFile(`contenido/voz-${red}.md`, "utf8"),
     readFile("contenido/material.md", "utf8"),
@@ -39,11 +39,12 @@ export async function contexto(red: Red, { propios = 15, ajenos = 5 } = {}): Pro
     postsRecientes(red, propios),
     postsRecientes(otra, ajenos),
     sql<Fuente>(
-      "SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE fecha >= ? AND origen NOT IN ('github', 'vercel') ORDER BY fecha DESC LIMIT 60",
+      "SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE fecha >= ? AND origen NOT IN ('github', 'vercel', 'noticias') ORDER BY fecha DESC LIMIT 60",
       [hace4dias],
     ),
     sql<Fuente>("SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE origen IN ('github', 'vercel') AND fecha >= ? ORDER BY fecha DESC LIMIT 40", [hace3dias]),
     leerConfig("github_mencionables", MENCIONABLES_POR_DEFECTO),
+    sql<Fuente>("SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE origen = 'noticias' AND fecha >= ? ORDER BY fecha DESC LIMIT 15", [hace3dias]),
   ]);
   const publicos = new Set(mencionables.split(",").map((r) => r.trim().toLowerCase()));
   // Los repos de clientes llevan el nombre del cliente: los agentes nunca lo ven,
@@ -81,6 +82,11 @@ ${materialFijo}
 Links y fotos que mandó por Telegram (telegram_foto: la url tg:... se puede usar como imagen), sus bookmarks y likes de X, y lo último de las cuentas que sigue de cerca (la URL trae el id para citar). Úsalo como inspiración y para reaccionar con opinión propia; nunca copies ni lo presentes como experiencia de Diego.
 ${fuentes.map((f) => `- [${f.origen}${f.autor ? ` @${f.autor}` : ""} ${f.fecha.slice(0, 10)}] ${f.texto.replace(/\s+/g, " ").slice(0, 400)}${f.url ? ` (${f.url})` : ""}${f.metricas ? ` ${f.metricas}` : ""}`).join("\n") || "(nada todavía)"}
 </lo_que_diego_lee>
+
+<noticias>
+Lo más importante de tecnología y negocios de los últimos días, con cómo afecta a Ecuador (las busca cada mañana el agente de noticias, ya verificadas). Para opinar desde tu experiencia: qué significa para el dueño de un negocio aquí y qué haría Diego. "imagen" es la foto del artículo y se puede usar en el tuit.
+${noticias.map((n) => `- [${n.fecha.slice(0, 10)} · ${n.autor}${n.metricas ? ` · ${n.metricas}` : ""}] ${n.texto}`).join("\n") || "(todavía no hay)"}
+</noticias>
 
 <lo_que_diego_programa>
 Su actividad de los últimos 3 días en GitHub (commits, repos) y Vercel (🚀 deploys a producción, o sea cosas que ya están en vivo): material real de build in public (qué está construyendo, qué arregló, qué lanzó). Cuéntalo en lenguaje humano, no como lista de commits. Los proyectos de cliente se cuentan sin nombre y sin detalles que lo identifiquen ("una tienda en línea para un cliente").

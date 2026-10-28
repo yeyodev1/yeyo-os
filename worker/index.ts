@@ -25,6 +25,7 @@ type Boton = {
 
 const HORA_LINKEDIN = "30 13 * * *"; // 8:30 am Ecuador
 const RADAR_HORAS = [7, 13, 19]; // hora Ecuador: el radar corre una hora antes que los tweets
+const HORA_NOTICIAS = 6; // hora Ecuador: las noticias del día, antes del primer tweet
 const X_DESDE = 8;
 const X_HASTA = 22;
 
@@ -89,6 +90,7 @@ export default {
     await sincronizarVercel(env).catch((e) => console.error("Vercel:", e));
     const hora = (new Date(evento.scheduledTime).getUTCHours() + 19) % 24; // UTC-5, Ecuador no tiene horario de verano
     if (RADAR_HORAS.includes(hora)) await disparar(env, "radar.yml");
+    if (hora === HORA_NOTICIAS) await disparar(env, "noticias.yml");
     if ((await config(env, "pausa_x")) === "1" || hora < X_DESDE || hora > X_HASTA) return;
     const cada = Number(await config(env, "x_cada_horas")) || 4;
     if ((hora - X_DESDE) % cada === 0) await disparar(env, "x.yml");
@@ -282,9 +284,9 @@ async function atender(m: Mensaje, env: Env): Promise<void> {
       return responder(env, `${valor === "1" ? "⏸️ <b>En pausa</b>" : "▶️ <b>Activo de nuevo</b>"}: ${redes.map(nombreRed).join(" y ")}`);
     }
     case "/ya": {
-      const wf = { x: "x.yml", linkedin: "linkedin.yml", radar: "radar.yml" }[arg];
-      if (!wf) return responder(env, "🤔 Dime a quién lanzo:\n\n🐦 /ya x\n💼 /ya linkedin\n📡 /ya radar");
-      await disparar(env, wf, arg === "radar" ? {} : { forzar: "true" });
+      const wf = { x: "x.yml", linkedin: "linkedin.yml", radar: "radar.yml", noticias: "noticias.yml" }[arg];
+      if (!wf) return responder(env, "🤔 Dime a quién lanzo:\n\n🐦 /ya x\n💼 /ya linkedin\n📡 /ya radar\n📰 /ya noticias");
+      await disparar(env, wf, arg === "radar" || arg === "noticias" ? {} : { forzar: "true" });
       return responder(env, `🚀 <b>Lancé ${nombreRed(arg)}</b>\nEn 1 a 3 minutos te aviso qué salió ⏳`);
     }
     case "/estado":
@@ -496,7 +498,7 @@ Tu piquero de confianza para X y LinkedIn.
 📊 /estado · cómo van los agentes
 ⏸️ /pausa x · /pausa linkedin · /pausa (todo)
 ▶️ /sigue x · /sigue linkedin · /sigue (todo)
-🚀 /ya x · /ya linkedin · /ya radar`;
+🚀 /ya x · /ya linkedin · /ya radar · /ya noticias`;
 
 const reaccionar = (env: Env, m: Mensaje, emoji: string) =>
   telegram(env, "setMessageReaction", { chat_id: m.chat.id, message_id: m.message_id, reaction: [{ type: "emoji", emoji }] });
