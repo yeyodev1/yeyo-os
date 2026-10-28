@@ -6,7 +6,9 @@ import { contexto, hoy } from "../comun/contexto.ts";
 import { guardarConfig, guardarPost, leerConfig, postsDeHoy, sql } from "../comun/memoria.ts";
 import { avisar } from "../comun/telegram.ts";
 import { publicarHilo, urlTweet, yo } from "./api.ts";
+import { catalogoDesdeGithub } from "../instagram/catalogo.ts";
 import { citar, hilo, textoDeHilo } from "./formato.ts";
+import { capturarPagina, crearTarjeta } from "./imagen.ts";
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 const FRECUENCIAS = [1, 2, 3, 4, 6, 8];
@@ -81,6 +83,42 @@ const noPublicar = tool(
   },
 );
 
+const tarjeta = tool(
+  "crear_tarjeta",
+  "Crea una imagen 16:9 con tu marca para un tuit del hilo: la idea central en grande (frase), una lista de 3 a 4 puntos, o un antes y después. Sin emojis ni links. Devuelve el valor para el campo imagen.",
+  {
+    tipo: z.enum(["frase", "lista", "antes_despues"]),
+    texto: z.string().max(130).optional().describe("Solo frase: la idea en una oración, máx ~120 caracteres"),
+    titulo: z.string().max(70).optional().describe("lista y antes_despues: título corto"),
+    puntos: z.array(z.string().max(60)).min(2).max(4).optional().describe("Solo lista"),
+    antes: z.array(z.string().max(45)).min(2).max(4).optional().describe("Solo antes_despues"),
+    despues: z.array(z.string().max(45)).min(2).max(4).optional().describe("Solo antes_despues"),
+  },
+  async ({ tipo, texto, titulo, puntos, antes, despues }) => {
+    try {
+      if (tipo === "frase" && texto) return ok(await crearTarjeta({ tipo, texto }));
+      if (tipo === "lista" && titulo && puntos) return ok(await crearTarjeta({ tipo, titulo, puntos }));
+      if (tipo === "antes_despues" && titulo && antes && despues) return ok(await crearTarjeta({ tipo, titulo, antes, despues }));
+      return error("Faltan campos para ese tipo de tarjeta.");
+    } catch (e) {
+      return error(String(e));
+    }
+  },
+);
+
+const captura = tool(
+  "capturar_pagina",
+  "Toma una captura de una de tus páginas en vivo (las de <portafolio>) para mostrar ese caso en el hilo. Devuelve el valor para el campo imagen.",
+  { url: z.string() },
+  async ({ url }) => {
+    try {
+      return ok(await capturarPagina(url));
+    } catch (e) {
+      return error(`No pude abrir la página: ${String(e).slice(0, 200)}`);
+    }
+  },
+);
+
 const cambiarFrecuencia = tool(
   "cambiar_frecuencia",
   `Cambia cada cuántas horas te disparan (entre 8 am y 10 pm de Ecuador). Ahora: cada ${cadaHoras} h. Hazlo solo con evidencia en las métricas o en <aprendizajes>, no por intuición.`,
@@ -98,19 +136,25 @@ const prompt = `Hoy es ${hoy()}. Eres el agente que maneja el X (Twitter) de Die
 
 ${await contexto("x", { propios: 30 })}
 
+<portafolio>
+${(await catalogoDesdeGithub()) ?? "(no se pudo leer; todo está en yeyo.dev)"}
+</portafolio>
+
 Cómo hacerlo:
 1. Mira <posts_recientes_x> y sus métricas: qué tipo de tweet funcionó y qué no. Revisa <lo_que_diego_programa>, <lo_que_diego_lee> y <material_reciente> para ver qué hay nuevo. Lo que programó hoy es oro para build in public ("ahorita estoy…", "hoy saqué…").
 2. Decide si vale la pena publicar ahora. Si no hay nada bueno, usa no_publicar.
-3. Si publicas, elige un tipo y un gancho distintos a los de los últimos tweets y escríbelo siguiendo <voz> y <aprendizajes>. Solo hechos reales de las fuentes: no inventes cifras, clientes ni anécdotas. Nunca nombres clientes de Bakano.
-4. Refuerza el tweet cuando sume:
-   - Referencia: si reaccionas a un tweet de <lo_que_diego_lee>, cítalo con citar (el id sale de su URL) y aporta tu experiencia; no lo resumas.
-   - Imagen: las fotos que mandó Diego (origen telegram_foto, url "tg:...") son lo mejor porque son reales. También sirve la imagen principal de un artículo que comentas (búscala con WebFetch). Nunca inventes una URL de imagen.
-   - Hilo: cuando hay un paso a paso o una historia con varias partes, y como máximo uno al día.
+3. Si publicas, escribe un HILO de 4 a 7 tuits para dueños de negocio, siguiendo <voz> y <aprendizajes>: gancho con opinión → un punto por tuit con un ejemplo real → cierre con la lección. Lo técnico de <lo_que_diego_programa> se traduce a qué gana el negocio (ventas, tiempo, plata), nunca en jerga de dev. Elige un tema y un gancho distintos a los de los últimos posts. Solo hechos reales de las fuentes: no inventes cifras, clientes ni anécdotas. Los proyectos de <portafolio> son públicos y se pueden nombrar; otros clientes de Bakano, nunca. Un tuit suelto solo si es una opinión corta y filosa (máx. uno al día).
+4. Imágenes, siempre: el primer tuit lleva una imagen, y si suma, otra en el tuit clave.
+   - crear_tarjeta con la idea central, una lista o un antes y después (la que más se comparte).
+   - capturar_pagina de una página de <portafolio> cuando cuentas ese caso.
+   - Las fotos que mandó Diego (origen telegram_foto, url "tg:...") son lo mejor cuando encajan porque son reales.
+   - Nunca inventes una URL de imagen.
+   - Referencia: si reaccionas a un tweet de <lo_que_diego_lee>, cítalo con citar (el id sale de su URL) y aporta tu opinión; no lo resumas.
 5. Si dudas de algo, usa dejar_borrador en lugar de publicar.
 6. Opcional: si las métricas de varios días muestran algo claro, ajusta tu frecuencia con cambiar_frecuencia.
 7. Termina en cuanto publiques, dejes el borrador o decidas no publicar.`;
 
-const resultado = await correrAgente({ prompt, herramientas: [publicar, borrador, noPublicar, cambiarFrecuencia], effort: "medium" });
+const resultado = await correrAgente({ prompt, herramientas: [publicar, borrador, noPublicar, tarjeta, captura, cambiarFrecuencia], effort: "medium" });
 
 if (publicado) {
   const final: { ids: string[]; texto: string } = publicado;

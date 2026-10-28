@@ -1,5 +1,6 @@
 // Cliente mínimo de la API v2 de X con OAuth 2.0 (contexto de usuario).
 // Cobro por uso: ~$0.015 por tweet creado, ~$0.005 por post ajeno leído, ~$0.001 por dato propio.
+import { readFile } from "node:fs/promises";
 import { guardarConfig, leerConfig } from "../comun/memoria.ts";
 
 const API = "https://api.x.com/2";
@@ -54,13 +55,22 @@ async function x<T>(ruta: string, init: RequestInit = {}): Promise<T> {
 
 export type ParteHilo = { texto: string; imagen?: string };
 
-// Sube una imagen (URL https o "tg:<file_id>" de una foto que Diego mandó por Telegram).
+// Sube una imagen: URL https, "tg:<file_id>" de una foto que Diego mandó por Telegram o
+// "archivo:<ruta>" de una tarjeta o captura hecha en esta ejecución (src/x/imagen.ts).
 export async function subirImagen(origen: string): Promise<string> {
-  const res = await fetch(await urlDescarga(origen));
-  if (!res.ok) throw new Error(`No pude bajar la imagen (${res.status})`);
-  const tipo = res.headers.get("content-type") ?? "";
+  let tipo: string;
+  let datos: ArrayBuffer;
+  if (origen.startsWith("archivo:")) {
+    const ruta = origen.slice(8);
+    tipo = ruta.endsWith(".png") ? "image/png" : "image/jpeg";
+    datos = new Uint8Array(await readFile(ruta)).buffer;
+  } else {
+    const res = await fetch(await urlDescarga(origen));
+    if (!res.ok) throw new Error(`No pude bajar la imagen (${res.status})`);
+    tipo = res.headers.get("content-type") ?? "";
+    datos = await res.arrayBuffer();
+  }
   if (!/^image\/(jpeg|png|webp|gif)/.test(tipo)) throw new Error(`No es una imagen soportada: ${tipo || "sin tipo"}`);
-  const datos = await res.arrayBuffer();
   if (datos.byteLength > 5 * 1024 * 1024) throw new Error("La imagen pasa de 5 MB");
 
   const form = new FormData();

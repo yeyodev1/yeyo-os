@@ -11,7 +11,7 @@ export const parte = z.object({
   imagen: z
     .string()
     .optional()
-    .describe('Opcional: URL https de una imagen (jpg/png/webp/gif, máx 5 MB) o "tg:<file_id>" de una foto que Diego mandó por Telegram'),
+    .describe('Opcional: "archivo:..." que devolvió crear_tarjeta o capturar_pagina, "tg:<file_id>" de una foto que Diego mandó por Telegram, o URL https de una imagen (jpg/png/webp/gif, máx 5 MB)'),
 });
 
 export const hilo = z.array(parte).min(1).max(8).describe("1 elemento = tweet suelto; 2 a 8 = hilo, en orden");
@@ -23,4 +23,4 @@ export const citar = z
   .describe("Opcional: id numérico de un tweet a citar (quote) en el primer tweet; sale de las URLs x.com/.../status/<id>");
 
 export const textoDeHilo = (partes: ParteHilo[]) =>
-  partes.map((p) => (p.imagen ? `${p.texto}\n[imagen: ${p.imagen}]` : p.texto)).join("\n\n—\n\n");
+  partes.map((p) => (p.imagen ? `${p.texto}\n[imagen: ${p.imagen.startsWith("archivo:") ? "tarjeta o captura" : p.imagen}]` : p.texto)).join("\n\n—\n\n");
