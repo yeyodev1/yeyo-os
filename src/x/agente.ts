@@ -41,6 +41,8 @@ const publicar = tool(
   },
   async ({ tweets, citar, tipo, gancho, tema }) => {
     if (publicado) return error("Ya publicaste en esta ejecución.");
+    // Diego quiere imagen en cada hilo: sin ella el agente a veces publica directo.
+    if (tweets.length > 1 && !tweets[0].imagen) return error("El primer tuit del hilo necesita imagen: crea una con crear_tarjeta o capturar_pagina, o usa una foto tg:..., y vuelve a llamar publicar_tweet.");
     tweets = tweets.map((t) => ({ ...t, texto: sinApertura(t.texto) }));
     let ids: string[];
     try {
