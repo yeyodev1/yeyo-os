@@ -42,7 +42,7 @@ const publicar = tool(
   async ({ tweets, citar, tipo, gancho, tema }) => {
     if (publicado) return error("Ya publicaste en esta ejecución.");
     // Diego quiere imagen en cada hilo: sin ella el agente a veces publica directo.
-    if (tweets.length > 1 && !tweets[0].imagen) return error("El primer tuit del hilo necesita imagen: crea una con crear_tarjeta o capturar_pagina, o usa una foto tg:..., y vuelve a llamar publicar_tweet.");
+    if (!tweets[0].imagen) return error("El primer tuit necesita imagen: la del artículo si comentas una noticia, una tarjeta (crear_tarjeta), una captura (capturar_pagina) o una foto tg:... Vuelve a llamar publicar_tweet con ella.");
     tweets = tweets.map((t) => ({ ...t, texto: sinApertura(t.texto) }));
     let ids: string[];
     try {
@@ -144,9 +144,11 @@ ${(await catalogoDesdeGithub()) ?? "(no se pudo leer; todo está en yeyo.dev)"}
 
 Cómo hacerlo:
 1. Mira <posts_recientes_x> y sus métricas: qué tipo de tweet funcionó y qué no. Revisa <noticias>, <lo_que_diego_programa>, <lo_que_diego_lee> y <material_reciente> para ver qué hay nuevo. Cada día, al menos uno de los hilos debe tomar una noticia de <noticias> y decir con opinión cómo pega en los negocios de Ecuador y qué haría Diego (si hoy todavía no salió uno así, prioriza ese). Lo que programó hoy es oro para build in public ("ahorita estoy…", "hoy saqué…").
-2. Decide si vale la pena publicar ahora. Si no hay nada bueno, usa no_publicar.
+2. Busca en línea antes de escribir: con WebSearch mira lo último del tema que elegiste (o de la noticia de <noticias>) y cómo afecta a Ecuador, y abre la nota con WebFetch para tener el dato exacto y su imagen principal (og:image). Si sale algo más fresco e importante que lo de <noticias>, úsalo. Decide si vale la pena publicar ahora; si no hay nada bueno, usa no_publicar.
 3. Si publicas, escribe un HILO de 4 a 7 tuits para dueños de negocio, siguiendo <voz> y <aprendizajes>: gancho con opinión → un punto por tuit con un ejemplo real → cierre con la lección. Lo técnico de <lo_que_diego_programa> se traduce a qué gana el negocio (ventas, tiempo, plata), nunca en jerga de dev. Elige un tema y un gancho distintos a los de los últimos posts. Solo hechos reales de las fuentes: no inventes cifras, clientes ni anécdotas. Los proyectos de <portafolio> son públicos y se pueden nombrar; otros clientes de Bakano, nunca. Un tuit suelto solo si es una opinión corta y filosa (máx. uno al día).
-4. Imágenes, siempre: el primer tuit lleva una imagen, y si suma, otra en el tuit clave.
+   Anécdotas: cada post lleva al menos una anécdota o frase real de Diego sacada de <lo_que_diego_dice> (sus reels) o <material_reciente>, en primera persona ("el otro día una dueña me dijo…", "yo siempre digo que…"). Nunca inventes una.
+4. Imágenes, siempre (el sistema no deja publicar sin una en el primer tuit), y si suma, otra en el tuit clave:
+   - La imagen del artículo (URL https de su og:image) cuando el post comenta una noticia.
    - crear_tarjeta con la idea central, una lista o un antes y después (la que más se comparte).
    - capturar_pagina de una página de <portafolio> cuando cuentas ese caso.
    - Las fotos que mandó Diego (origen telegram_foto, url "tg:...") son lo mejor cuando encajan porque son reales.

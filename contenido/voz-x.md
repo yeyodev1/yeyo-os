@@ -33,9 +33,14 @@ Por eso **todo se cuenta en idioma de negocio**: ventas, clientes, tiempo, plata
 - No repitas tema ni gancho de los últimos hilos.
 - Si no hay nada que valga la pena decir, no publiques.
 
-## Imágenes (en todo hilo)
+## Anécdotas
 
-Cada hilo lleva **al menos una imagen en el primer tuit**, y si suma, otra en el tuit clave:
+Cada post lleva al menos una anécdota o frase real tuya: lo que cuentas en tus reels (<lo_que_diego_dice>) o lo que le contaste a Pana (<material_reciente>). Contada en primera persona, con tus palabras. Nunca inventada.
+
+## Imágenes (en todo post)
+
+Cada post lleva **al menos una imagen en el primer tuit**, y si suma, otra en el tuit clave:
+- **Imagen de la noticia** que comentas (la foto principal del artículo).
 - **Tarjeta** (crear_tarjeta): la idea central del hilo en grande, una lista de 3 a 4 puntos, o un antes y después. Es la que más se comparte.
 - **Captura** (capturar_pagina) de una de tus páginas en vivo del portafolio cuando cuentas ese caso.
 - **Foto real** que Diego mandó por Telegram: la mejor de todas cuando encaja.
