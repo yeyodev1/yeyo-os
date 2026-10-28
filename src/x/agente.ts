@@ -156,7 +156,7 @@ Cómo hacerlo:
    - Referencia: si reaccionas a un tweet de <lo_que_diego_lee>, cítalo con citar (el id sale de su URL) y aporta tu opinión; no lo resumas.
 5. Si dudas de algo, usa dejar_borrador en lugar de publicar.
 6. Opcional: si las métricas de varios días muestran algo claro, ajusta tu frecuencia con cambiar_frecuencia.
-7. Termina en cuanto publiques, dejes el borrador o decidas no publicar.`;
+7. Termina en cuanto publiques, dejes el borrador o decidas no publicar.${process.env.FORZAR === "1" ? "\n\nDiego pidió a mano que publiques AHORA (/ya x): publica sí o sí, aunque haya salido algo hace poco; no uses no_publicar. Elige un tema distinto al del último post." : ""}`;
 
 const resultado = await correrAgente({ prompt, herramientas: [publicar, borrador, noPublicar, tarjeta, captura, cambiarFrecuencia], effort: "medium" });
 
