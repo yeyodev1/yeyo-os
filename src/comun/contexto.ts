@@ -5,6 +5,8 @@ import { type Fuente, type Post, type Red, leerConfig, postsRecientes, sql } fro
 
 // Repos propios que sí se pueden nombrar en público (configurable con la clave github_mencionables).
 const MENCIONABLES_POR_DEFECTO = "yeyo-os,agente-linkedin,personal-portfolio-2025,yeyo-backapp";
+// Conversaciones del Omi que nunca llegan a un post, aunque Diego hable de sí mismo.
+const OMI_PRIVADAS = new Set(["health", "romantic", "romance", "family", "parenting", "legal"]);
 // Partes de nombres de repo que no identifican a nadie (no se tapan en los commits).
 const GENERICAS = new Set(["backapp", "frontapp", "frontend", "backend", "api", "web", "app", "page", "tienda", "store", "landing", "admin", "dashboard", "bakano"]);
 
@@ -27,7 +29,7 @@ export async function contexto(red: Red, { propios = 15, ajenos = 5 } = {}): Pro
   const otra: Red = red === "x" ? "linkedin" : "x";
   const hace4dias = new Date(Date.now() - 4 * 86_400_000).toISOString();
   const hace3dias = new Date(Date.now() - 3 * 86_400_000).toISOString();
-  const [voz, vozRed, materialFijo, material, aprendizajes, mios, otros, fuentes, github, mencionables, noticias, videos] = await Promise.all([
+  const [voz, vozRed, materialFijo, material, aprendizajes, mios, otros, fuentes, github, mencionables, noticias, videos, omi] = await Promise.all([
     readFile("contenido/voz.md", "utf8"),
     readFile(`contenido/voz-${red}.md`, "utf8"),
     readFile("contenido/material.md", "utf8"),
@@ -48,6 +50,7 @@ export async function contexto(red: Red, { propios = 15, ajenos = 5 } = {}): Pro
     sql<{ publicado: string | null; caption: string | null; resumen: string | null; transcripcion: string | null }>(
       "SELECT publicado, caption, resumen, transcripcion FROM videos_ig WHERE estado = 'hecho' ORDER BY publicado DESC LIMIT 12",
     ),
+    sql<Fuente>("SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE origen IN ('omi', 'omi_dia') AND fecha >= ? ORDER BY fecha DESC LIMIT 40", [hace3dias]),
   ]);
   const publicos = new Set(mencionables.split(",").map((r) => r.trim().toLowerCase()));
   // Los repos de clientes llevan el nombre del cliente: los agentes nunca lo ven,
@@ -63,6 +66,15 @@ export async function contexto(red: Red, { propios = 15, ajenos = 5 } = {}): Pro
     const oculto = nombre.length ? texto.replace(new RegExp(nombre.join("|"), "gi"), "[cliente]") : texto;
     return `un proyecto de cliente (nombre oculto): ${oculto}`;
   };
+
+  // Del Omi solo pasa el resumen y lo que dijo Diego: las palabras de los demás se quedan en la memoria.
+  const vivencia = (o: Fuente) => {
+    if (o.origen === "omi_dia") return `--- Resumen del ${o.fecha.slice(0, 10)}\n${o.texto.split("\n\nPendientes:")[0].slice(0, 1200)}`;
+    const [cabeza, transcripcion = ""] = o.texto.split("\n\nTranscripción:\n");
+    const suyo = transcripcion.split("\n").filter((l) => l.startsWith("Diego: ")).map((l) => l.slice(7)).join(" ");
+    return `--- ${o.fecha.slice(0, 16)} · ${cabeza.split("\n\nPendientes:")[0].replace(/\n+/g, " · ")}\nLo que dijo Diego: ${suyo.slice(0, 1200) || "(casi no habló)"}`;
+  };
+  const vivencias = omi.filter((o) => !OMI_PRIVADAS.has(o.autor ?? "")).map(vivencia);
 
   return `<voz>
 ${voz}
@@ -90,6 +102,11 @@ ${fuentes.map((f) => `- [${f.origen}${f.autor ? ` @${f.autor}` : ""} ${f.fecha.s
 Lo que Diego cuenta en sus reels de Instagram (@yeyo.dev), con sus propias palabras: sus anécdotas, casos y opiniones reales. Es la mejor fuente de anécdotas para los posts: cuéntalas en primera persona y con sus frases, sin inventar detalles que no estén aquí.
 ${videos.map((v) => `--- ${v.publicado?.slice(0, 10) ?? "—"} · ${(v.caption ?? "").replace(/\s+/g, " ").slice(0, 120)}\nDe qué va: ${v.resumen ?? "—"}\nLo que dice: ${(v.transcripcion ?? "").replace(/\s+/g, " ").slice(0, 900)}`).join("\n") || "(todavía no hay)"}
 </lo_que_diego_dice>
+
+<lo_que_diego_vive>
+Lo que Diego habló estos días en persona (reuniones, llamadas, charlas), grabado por su colgante Omi: lo que está enfrentando ahorita en su negocio y con sus clientes. Es la mejor fuente para historias y para opinar: cuéntalo en primera persona, como algo que le está pasando ("esta semana me tocó…", "hoy en una reunión me di cuenta de que…"), y saca su postura y la lección. Es privado, así que se cuenta anonimizado: nunca nombres de personas, clientes, empresas ni marcas que no sean de Diego, ni montos, ni datos que permitan saber de quién se habla, ni frases textuales de otros ("un cliente", "un socio", "alguien de mi equipo"). Si la historia no se puede contar sin delatar a alguien, no la uses.
+${vivencias.join("\n\n") || "(nada estos días)"}
+</lo_que_diego_vive>
 
 <noticias>
 Lo más importante de tecnología y negocios de los últimos días, con cómo afecta a Ecuador (las busca cada mañana el agente de noticias, ya verificadas). Para opinar desde tu experiencia: qué significa para el dueño de un negocio aquí y qué haría Diego. "imagen" es la foto del artículo y se puede usar en el tuit.
