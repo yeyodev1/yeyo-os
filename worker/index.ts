@@ -4,6 +4,7 @@
 // contestar al instante, llama a Claude directo por la Messages API.
 import { type Env, type Lead, avisarInstagram, config, escapar, guardarConfig, igualSeguro, leadAGhl, responder, telefonoE164, telegram } from "./comun";
 import { borrarVencidos, comandoBoveda, mostrarClave, pareceClave } from "./boveda";
+import { webhookOmi } from "./omi";
 import { enviarDesdePana, pensamientosInstagram, procesarWebhookInstagram, refrescarTokenIg, hacerSeguimientos, rescatarPensamientos, revisarComentarios, sincronizarVideos, verificarFirmaMeta, videosInstagram } from "./instagram";
 
 type Mensaje = {
@@ -50,6 +51,13 @@ export default {
       if (!(await verificarFirmaMeta(env, cuerpo, req.headers.get("X-Hub-Signature-256") ?? ""))) return new Response("no", { status: 401 });
       // Meta reintenta si no le respondemos rápido: el trabajo sigue en segundo plano.
       ctx.waitUntil(procesarWebhookInstagram(env, JSON.parse(cuerpo)).catch((e) => avisarInstagram(env, `⚠️ **Instagram**: ${String(e).slice(0, 300)}`)));
+      return new Response("ok");
+    }
+    // Webhooks del Omi: el secreto va en la ruta porque Omi le agrega ?uid= a la URL.
+    if (url.pathname.startsWith("/omi/")) {
+      if (req.method !== "POST" || !env.OMI_SECRET || !igualSeguro(url.pathname.slice(5), env.OMI_SECRET)) return new Response("no", { status: 401 });
+      const cuerpo = await req.json().catch(() => null);
+      ctx.waitUntil(webhookOmi(env, cuerpo, url.searchParams.get("uid")).catch((e) => console.error("Omi:", e)));
       return new Response("ok");
     }
     if (req.method === "POST" && url.pathname === "/api/github") {

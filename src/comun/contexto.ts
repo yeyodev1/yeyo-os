@@ -39,7 +39,7 @@ export async function contexto(red: Red, { propios = 15, ajenos = 5 } = {}): Pro
     postsRecientes(red, propios),
     postsRecientes(otra, ajenos),
     sql<Fuente>(
-      "SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE fecha >= ? AND origen NOT IN ('github', 'vercel', 'noticias') ORDER BY fecha DESC LIMIT 60",
+      "SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE fecha >= ? AND origen NOT IN ('github', 'vercel', 'noticias', 'omi', 'omi_dia') ORDER BY fecha DESC LIMIT 60",
       [hace4dias],
     ),
     sql<Fuente>("SELECT fecha, origen, autor, url, texto, metricas FROM fuentes WHERE origen IN ('github', 'vercel') AND fecha >= ? ORDER BY fecha DESC LIMIT 40", [hace3dias]),
